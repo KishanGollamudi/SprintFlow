@@ -15,29 +15,34 @@ const SprintContext = createContext();
 
 export const SprintProvider = ({ children }) => {
   const { user } = useAuth();
-  // useAppData() is safe here because SprintProvider is always inside AppDataProvider
-  // Guard with ?? {} in case context hasn't hydrated yet
   const appData = useAppData() ?? {};
-  const appSprints = appData.sprints;
 
   const [sprints, setSprints] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+  const [error, setError] = useState(null);
 
+  // ── Fetch directly from API ───────────────────────────────
   const fetchSprints = useCallback(async () => {
-    if (USE_MOCK) return;
+    if (USE_MOCK || !user) return;
     const token = localStorage.getItem("accessToken");
     if (!token) return;
-    const role = user?.role?.toLowerCase();
-    const uid  = user?.id;
     try {
       setLoading(true);
       setError(null);
       const res =
-        role === "trainer" && uid != null
-          ? await sprintService.getByTrainer(uid)
+        user.role?.toLowerCase() === "trainer" && user.id
+          ? await sprintService.getByTrainer(user.id)
           : await sprintService.getAll();
-      setSprints(unwrapList(res));
+      const list = unwrapList(res);
+      // dedupe by id in case backend or local sync introduced duplicates
+      const seen = new Set();
+      const unique = list.filter((s) => {
+        if (!s || !s.id) return true;
+        if (seen.has(s.id)) return false;
+        seen.add(s.id);
+        return true;
+      });
+      setSprints(unique);
     } catch (err) {
       if (!err.message?.includes("403")) setError(err.message);
     } finally {
@@ -45,14 +50,20 @@ export const SprintProvider = ({ children }) => {
     }
   }, [user]);
 
-  // Mirror sprints from AppDataContext when available; otherwise fetch directly
+  // ── Initial fetch on mount / user change ─────────────────
   useEffect(() => {
-    if (Array.isArray(appSprints) && appSprints.length > 0) {
-      setSprints(appSprints);
+    if (USE_MOCK) {
+      // In mock mode use AppDataContext sprints
+      if (Array.isArray(appData.sprints) && appData.sprints.length > 0) {
+        setSprints(appData.sprints);
+      }
       return;
     }
     fetchSprints();
-  }, [fetchSprints, user, appSprints]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // ── Mutations ─────────────────────────────────────────────
 
   const addSprint = async (data) => {
     const payload = {
@@ -61,26 +72,78 @@ export const SprintProvider = ({ children }) => {
         ? data.cohorts
         : [{ technology: data.technology || "", cohort: data.cohort || "" }],
       cohort: data.cohorts?.[0]?.cohort || data.cohort || "",
-      timeSlot: `${data.sprintStart} - ${data.sprintEnd}`,
+      timeSlot: `${data.sprintStart || ""} - ${data.sprintEnd || ""}`,
     };
     if (USE_MOCK) {
-      setSprints((p) => [
-        ...p,
-        { ...payload, id: crypto.randomUUID(), status: "Scheduled" },
-      ]);
+      const mock = { ...payload, id: crypto.randomUUID(), status: "Scheduled" };
+      setSprints((p) => {
+        const next = [...p, mock];
+        const seen = new Set();
+        return next.filter((s) => {
+          if (!s || !s.id) return true;
+          if (seen.has(s.id)) return false;
+          seen.add(s.id);
+          return true;
+        });
+      });
       return;
     }
     const res = await sprintService.create(payload);
-    setSprints((p) => [...p, res.data]);
+    const created = res?.data ?? res;
+    setSprints((p) => {
+      const next = [...p, created];
+      const seen = new Set();
+      return next.filter((s) => {
+        if (!s || !s.id) return true;
+        if (seen.has(s.id)) return false;
+        seen.add(s.id);
+        return true;
+      });
+    });
+    // Sync AppDataContext WITHOUT calling the API again — pass a marker
+    // so AppDataContext only updates local state (avoids duplicate create).
+    if (appData.addSprint) {
+      try {
+        appData.addSprint({ ...created, _skipApi: true });
+      } catch {
+        /* ignore */
+      }
+    }
   };
 
   const updateStatus = async (id, status) => {
     if (USE_MOCK) {
       setSprints((p) => p.map((s) => (s.id === id ? { ...s, status } : s)));
+      // also sync to AppData so manager view updates
+      if (appData.patchSprintStatus) appData.patchSprintStatus(id, status);
+      if (appData.updateSprint)
+        appData.updateSprint(id, { status }).catch(() => {});
       return;
     }
-    await sprintService.updateStatus(id, status);
+    // optimistic update locally
     setSprints((p) => p.map((s) => (s.id === id ? { ...s, status } : s)));
+    if (appData.patchSprintStatus) appData.patchSprintStatus(id, status);
+    try {
+      await sprintService.updateStatus(id, status);
+      // fetch the full updated sprint from server to sync other fields
+      try {
+        const res = await sprintService.getById(id);
+        const updated = res?.data ?? res;
+        if (updated) {
+          setSprints((p) =>
+            p.map((s) => (s.id === id ? { ...s, ...updated } : s)),
+          );
+          if (appData.updateSprint)
+            appData.updateSprint(id, updated).catch(() => {});
+        }
+      } catch (e) {
+        // ignore getById failure — local optimistic state is still valid
+      }
+    } catch (err) {
+      // revert by refetching from server
+      fetchSprints();
+      throw err;
+    }
   };
 
   const updateSprint = async (id, data) => {
@@ -88,8 +151,14 @@ export const SprintProvider = ({ children }) => {
       setSprints((p) => p.map((s) => (s.id === id ? { ...s, ...data } : s)));
       return;
     }
+    // Call API — backend resolves trainer name from DB
     const res = await sprintService.update(id, data);
-    setSprints((p) => p.map((s) => (s.id === id ? { ...s, ...res.data } : s)));
+    // api.js interceptor returns ApiResponseDTO; .data is the SprintDTO
+    const updated = res?.data ?? res;
+    // Update local state with server-resolved data (correct trainer name)
+    setSprints((p) => p.map((s) => (s.id === id ? { ...s, ...updated } : s)));
+    // Sync AppDataContext independently (don't await — avoid overwrite race)
+    if (appData.updateSprint) appData.updateSprint(id, data).catch(() => {});
   };
 
   const deleteSprint = async (id) => {
@@ -99,6 +168,7 @@ export const SprintProvider = ({ children }) => {
     }
     await sprintService.delete(id);
     setSprints((p) => p.filter((s) => s.id !== id));
+    if (appData.deleteSprint) appData.deleteSprint(id).catch(() => {});
   };
 
   return (

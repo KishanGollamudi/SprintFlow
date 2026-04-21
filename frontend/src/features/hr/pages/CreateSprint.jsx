@@ -2,7 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Form,
@@ -12,13 +12,13 @@ import {
   FormControl,
   FormMessage,
 } from "@/components/ui/form";
-import { Clock, ArrowLeft, CheckCircle } from "lucide-react";
+import { Clock, ArrowLeft, CheckCircle, AlertTriangle } from "lucide-react";
 import { useSprints } from "@/context/SprintContext";
 import { H, hInp, hLbl } from "@/theme/hr";
 import PageBanner from "@/components/PageBanner";
 import { TECH_COHORTS } from "@/constants/cohortLabels";
 import { useAppData } from "@/context/AppDataContext";
-import { shortCohort } from "@/lib/cohortUtils";
+import sprintService from "@/services/sprintService";
 
 const formSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -34,13 +34,7 @@ const formSchema = z.object({
 const TECHNOLOGIES = ["Java", "Python", "Devops", "DotNet", "SalesForce"];
 
 // rooms list is provided by AppDataContext (fetched from backend)
-const trainers = [
-  "Vikram Singh",
-  "Anita Desai",
-  "Ravi Shankar",
-  "Nisha Kapoor",
-  "Surya prakash rao.P",
-];
+// trainers list is provided by AppDataContext (fetched from /api/users?role=TRAINER)
 
 // ── Drum Picker ──────────────────────────────────────────────────
 const hours = Array.from({ length: 12 }, (_, i) =>
@@ -349,9 +343,36 @@ const Field = ({ label, children, error }) => (
 
 const CreateSprint = () => {
   const { addSprint } = useSprints();
-  const { cohortNames, rooms } = useAppData();
+  const { rooms, trainers, employees } = useAppData();
   const navigate = useNavigate();
   const [success, setSuccess] = useState(false);
+
+  // Trainer time-slot conflict state
+  const [conflicts, setConflicts]           = useState([]);
+  const [conflictChecking, setChecking]     = useState(false);
+  const [conflictAcknowledged, setAckd]     = useState(false);
+
+  // Build cohort options per technology from DB employees, fallback to cohortLabels
+  const cohortsByTech = useMemo(() => {
+    const map = {};
+    TECHNOLOGIES.forEach((tech) => {
+      // From DB employees
+      const fromDB = [
+        ...new Set(
+          employees
+            .filter(
+              (e) =>
+                e.technology?.toLowerCase() === tech.toLowerCase() && e.cohort,
+            )
+            .map((e) => e.cohort),
+        ),
+      ].sort();
+      // Fallback to cohortLabels static list
+      const fallback = TECH_COHORTS[tech] ?? [];
+      map[tech] = fromDB.length > 0 ? fromDB : fallback;
+    });
+    return map;
+  }, [employees]);
 
   const form = useForm({
     resolver: zodResolver(formSchema),
@@ -412,8 +433,44 @@ const CreateSprint = () => {
     return errs.every((e) => !e.technology && !e.cohort);
   };
 
+  // Watch fields for conflict check — must be called at top level, not inside useEffect
+  const watchedTrainer     = form.watch("trainer");
+  const watchedStartDate   = form.watch("startDate");
+  const watchedEndDate     = form.watch("endDate");
+  const watchedSprintStart = form.watch("sprintStart");
+  const watchedSprintEnd   = form.watch("sprintEnd");
+
+  // ── Trainer conflict check ───────────────────────────────
+  // Fires whenever trainer, dates, or times change — all five fields must be filled.
+  useEffect(() => {
+    const trainerObj = trainers.find((t) => t.name === watchedTrainer);
+    if (!trainerObj?.id || !watchedStartDate || !watchedEndDate || !watchedSprintStart || !watchedSprintEnd) {
+      setConflicts([]);
+      return;
+    }
+    setChecking(true);
+    setAckd(false);
+    sprintService
+      .checkTrainerConflict({
+        trainerId:   trainerObj.id,
+        startDate:   watchedStartDate,
+        endDate:     watchedEndDate,
+        sprintStart: watchedSprintStart,
+        sprintEnd:   watchedSprintEnd,
+      })
+      .then((res) => {
+        const list = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+        setConflicts(list);
+      })
+      .catch(() => setConflicts([]))
+      .finally(() => setChecking(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedTrainer, watchedStartDate, watchedEndDate, watchedSprintStart, watchedSprintEnd]);
+
   const onSubmit = (data) => {
     if (!validatePairs()) return;
+    // If there are conflicts the HR must acknowledge before submitting
+    if (conflicts.length > 0 && !conflictAcknowledged) return;
     addSprint({
       ...data,
       cohorts: cohortPairs,
@@ -489,7 +546,7 @@ const CreateSprint = () => {
           <PageBanner
             title="Create Sprint"
             gradient={H.gradient}
-            shadow="4px 0 24px rgba(212,87,105,0.30)"
+            shadow="4px 0 24px rgba(29,111,164,0.30)"
             width="240px"
           />
           <p style={{ color: H.sub, fontSize: 13, margin: 0 }}>
@@ -655,19 +712,11 @@ const CreateSprint = () => {
                                 ? "Select cohort"
                                 : "Select technology first"}
                             </option>
-                            {(cohortNames || [])
-                              .filter((c) =>
-                                c
-                                  .toLowerCase()
-                                  .startsWith(
-                                    (pair.technology || "").toLowerCase(),
-                                  ),
-                              )
-                              .map((c) => (
-                                <option key={c} value={c} title={c}>
-                                  {shortCohort(c)}
-                                </option>
-                              ))}
+                            {(cohortsByTech[pair.technology] ?? []).map((c) => (
+                              <option key={c} value={c} title={c}>
+                                {c}
+                              </option>
+                            ))}
                           </select>
                           {pairErrors[idx]?.cohort && (
                             <p
@@ -738,9 +787,7 @@ const CreateSprint = () => {
                             }}
                           >
                             {p.technology} /{" "}
-                            <span title={p.cohort}>
-                              {shortCohort(p.cohort)}
-                            </span>
+                            <span title={p.cohort}>{p.cohort}</span>
                           </span>
                         ))}
                     </div>
@@ -815,8 +862,8 @@ const CreateSprint = () => {
                           >
                             <option value="">Select trainer</option>
                             {trainers.map((t) => (
-                              <option key={t} value={t}>
-                                {t}
+                              <option key={t.id ?? t.name} value={t.name}>
+                                {t.name}
                               </option>
                             ))}
                           </select>
@@ -935,7 +982,7 @@ const CreateSprint = () => {
                           <option value="">Choose a room</option>
                           {(rooms || []).map((r) => (
                             <option key={r} value={r} title={r}>
-                              {r}
+                              {r && r.includes(" - ") ? r.split(" - ")[1] : r}
                             </option>
                           ))}
                         </select>
@@ -974,10 +1021,52 @@ const CreateSprint = () => {
                   )}
                 />
 
+                {/* Trainer conflict warning */}
+                {conflicts.length > 0 && (
+                  <div style={{
+                    padding: "14px 16px", borderRadius: 12,
+                    background: "rgba(245,158,11,0.07)",
+                    border: `1.5px solid ${H.amberBd}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <AlertTriangle size={15} style={{ color: H.amber, flexShrink: 0 }} />
+                      <span style={{ color: H.amber, fontWeight: 700, fontSize: 13 }}>
+                        Trainer time-slot conflict detected
+                      </span>
+                    </div>
+                    <p style={{ color: H.sub, fontSize: 12, margin: "0 0 8px" }}>
+                      This trainer is already assigned to the following sprint(s) during the selected period:
+                    </p>
+                    {conflicts.map((c) => (
+                      <div key={c.id} style={{
+                        background: H.card, borderRadius: 8, padding: "8px 12px",
+                        marginBottom: 6, border: `1px solid ${H.border}`, fontSize: 12,
+                      }}>
+                        <span style={{ color: H.text, fontWeight: 700 }}>{c.title}</span>
+                        <span style={{ color: H.muted, marginLeft: 8 }}>
+                          {c.startDate} → {c.endDate} &nbsp;&bull;&nbsp; {c.sprintStart} – {c.sprintEnd}
+                        </span>
+                      </div>
+                    ))}
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={conflictAcknowledged}
+                        onChange={(e) => setAckd(e.target.checked)}
+                        style={{ width: 15, height: 15, accentColor: H.amber, cursor: "pointer" }}
+                      />
+                      <span style={{ color: H.sub, fontSize: 12, fontWeight: 600 }}>
+                        I understand the conflict and want to proceed anyway
+                      </span>
+                    </label>
+                  </div>
+                )}
+
                 {/* Actions */}
                 <div style={{ display: "flex", gap: 12, paddingTop: 4 }}>
                   <button
                     type="submit"
+                    disabled={conflicts.length > 0 && !conflictAcknowledged}
                     style={{
                       padding: "11px 28px",
                       borderRadius: 12,
@@ -986,14 +1075,19 @@ const CreateSprint = () => {
                       fontWeight: 700,
                       fontSize: 14,
                       border: "none",
-                      cursor: "pointer",
+                      cursor: conflicts.length > 0 && !conflictAcknowledged ? "not-allowed" : "pointer",
                       boxShadow: H.accentGlow,
                       transition: "opacity 0.15s",
+                      opacity: conflicts.length > 0 && !conflictAcknowledged ? 0.5 : 1,
                     }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.opacity = "0.88")
-                    }
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                    onMouseEnter={(e) => {
+                      if (!(conflicts.length > 0 && !conflictAcknowledged))
+                        e.currentTarget.style.opacity = "0.88";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!(conflicts.length > 0 && !conflictAcknowledged))
+                        e.currentTarget.style.opacity = "1";
+                    }}
                   >
                     Create Sprint
                   </button>

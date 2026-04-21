@@ -1,66 +1,51 @@
-// ─────────────────────────────────────────────────────────────
 // src/services/userService.js
-// Handles Trainer, HR, HRBP user management (MANAGER only)
-//
-// Backend endpoints:
-//   GET    /api/users?role=TRAINER       — get all trainers
-//   GET    /api/users?role=HR            — get all HRBPs
-//   GET    /api/users/:id                — get user by id
-//   POST   /api/users                    — create user (generates credentials)
-//   PUT    /api/users/:id                — update user
-//   DELETE /api/users/:id                — delete user
-//
-// User shape:
-// {
-//   id, name, email, role: "HR"|"TRAINER"|"MANAGER",
-//   phone, department, trainerRole, status, joinedDate
-// }
-//
-// Create body:
-// {
-//   name, email, role, phone, department,
-//   trainerRole (for TRAINER), joinedDate
-// }
-// Backend auto-generates a random password and emails credentials
-// ─────────────────────────────────────────────────────────────
-
 import api from "./api";
 
 const userService = {
-  // ── Get all trainers ────────────────────────────────────────
+  // Active only — for sprint creation dropdown and HR lists
   getTrainers() {
     return api.get("/users", { params: { role: "TRAINER" } });
   },
 
-  // ── Get all HRBPs ───────────────────────────────────────────
+  // All including Inactive — for manager Trainers page (show/restore)
+  getAllTrainers() {
+    return api.get("/users", { params: { role: "TRAINER", includeInactive: true } });
+  },
+
+  // Active only — for dropdowns
   getHRBPs() {
     return api.get("/users", { params: { role: "HR" } });
   },
 
-  // ── Get user by ID ──────────────────────────────────────────
+  // All including Inactive — for manager HRBPs page (show/restore)
+  getAllHRBPs() {
+    return api.get("/users", { params: { role: "HR", includeInactive: true } });
+  },
+
   getById(id) {
     return api.get(`/users/${id}`);
   },
 
-  // ── Create user — backend generates & emails credentials ────
   // Body: { name, email, role, phone, department, trainerRole, joinedDate }
+  // Backend auto-generates a random password and emails credentials
   create(data) {
     return api.post("/users", data);
   },
 
-  // ── Update user ─────────────────────────────────────────────
   update(id, data) {
     return api.put(`/users/${id}`, data);
   },
 
-  // ── Delete user ─────────────────────────────────────────────
   delete(id) {
     return api.delete(`/users/${id}`);
   },
 
-  // ── Resend credentials email ─────────────────────────────────
   resendCredentials(id) {
     return api.post(`/users/${id}/resend-credentials`);
+  },
+
+  restore(id) {
+    return api.patch(`/users/${id}/restore`);
   },
 };
 

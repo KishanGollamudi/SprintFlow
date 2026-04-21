@@ -1,428 +1,517 @@
-import { useMemo, useState } from "react";
+// src/features/trainer/pages/TrainerDashboard.jsx
+// Trainer dashboard — 3 sections: cohort bar chart, today's sprint cards, per-sprint pie charts.
+//
+// Data strategy (fixes stale-on-refresh for ALL sections):
+//   1. On mount, fetch getAllBySprint for each sprint → fills bar chart + pie charts.
+//   2. On mount, call ensureSession(sprintId, today) for each sprint → fetches today's
+//      DB records into AttendanceContext sessions → fills Today's Sprint Cards.
+//   3. After ensureSession resolves, merge today's session entries back into
+//      sprintAttendance so bar chart + pie charts also reflect today's data immediately.
+//   4. A `refreshKey` state is incremented after attendance submit so all sections re-fetch.
+
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Users, UserCheck, Clock, UserX, ArrowRight } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  PieChart, Pie, Legend,
+} from "recharts";
 import { useAppData } from "@/context/AppDataContext";
-import { Link } from "react-router-dom";
+import { useAttendance } from "@/context/AttendanceContext";
+import { useAuth } from "@/context/AuthContext";
+import attendanceService from "@/services/attendanceService";
+import { unwrapList } from "@/utils/apiResponse";
 import { T } from "@/theme/trainer";
 import PageBanner from "@/components/PageBanner";
-import CohortTag from "@/components/CohortTag";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  Legend, ResponsiveContainer,
-} from "recharts";
+import { todayLocal } from "@/utils/dateUtils";
 
-const COHORT_COLORS = {
-  "Cohort A": "#0d9488",
-  "Cohort B": "#f59e0b",
-  "Cohort C": "#8b5cf6",
-};
-const COHORT_COLOR_LIST = ["#0d9488", "#f59e0b", "#8b5cf6", "#3b82f6", "#ec4899"];
+// ── Colour helpers ────────────────────────────────────────────────────────────
+const pctColor = (pct) =>
+  pct >= 75 ? T.green : pct >= 50 ? T.amber : T.red;
 
-const getCohortColor = (cohort, idx) =>
-  COHORT_COLORS[cohort] ?? COHORT_COLOR_LIST[idx % COHORT_COLOR_LIST.length];
-
-const TRAINER_GRADIENT = "linear-gradient(135deg, #0d9488 0%, #99f6e4 100%)";
-
-const TrainerStatCard = ({ item, index, total }) => {
-  const [hovered, setHovered] = useState(false);
-  const Icon = item.icon;
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.08, duration: 0.35 }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        position: "relative", overflow: "hidden", borderRadius: 16,
-        padding: "28px 24px", cursor: "default",
-        border: `1.5px solid ${hovered ? T.accent : T.border}`,
-        background: hovered ? TRAINER_GRADIENT : T.card,
-        boxShadow: hovered ? T.accentGlow : T.shadow,
-        transition: "background 0.28s, border-color 0.28s, box-shadow 0.28s",
-      }}
-    >
-      <div style={{ position: "relative", zIndex: 1 }}>
-        <div style={{
-          width: 34, height: 34, borderRadius: 10, marginBottom: 20,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: hovered ? "rgba(255,255,255,0.2)" : item.lightBg,
-          border: `1.5px solid ${hovered ? "rgba(255,255,255,0.35)" : T.border}`,
-          transition: "background 0.28s, border-color 0.28s",
-        }}>
-          <Icon size={17} style={{ color: hovered ? "#fff" : item.iconColor, transition: "color 0.28s" }} />
-        </div>
-        <p style={{
-          fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.15em", marginBottom: 6,
-          color: hovered ? "rgba(255,255,255,0.7)" : T.muted,
-          transition: "color 0.28s",
-        }}>
-          {item.title}
-        </p>
-        <p style={{
-          fontSize: 38, fontWeight: 800, lineHeight: 1, marginBottom: 6,
-          color: hovered ? "#fff" : T.text,
-          transition: "color 0.28s",
-        }}>
-          {item.value}
-        </p>
-        <p style={{
-          fontSize: 11,
-          color: hovered ? "rgba(255,255,255,0.55)" : T.muted,
-          transition: "color 0.28s",
-        }}>
-          {total > 0 ? `${Math.round((item.value / total) * 100)}% of total` : "—"}
-        </p>
-      </div>
-    </motion.div>
-  );
+// ── Shared input style ────────────────────────────────────────────────────────
+const inputStyle = {
+  height: 32, borderRadius: 8, border: `1.5px solid ${T.border}`,
+  background: "#fff", color: T.text, padding: "0 8px", fontSize: 12,
+  outline: "none", cursor: "pointer", fontFamily: "inherit",
 };
 
-// Custom tooltip for bar chart
-const CustomTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
+// ── Section card wrapper ──────────────────────────────────────────────────────
+const Section = ({ children, delay = 0 }) => (
+  <motion.div
+    initial={{ opacity: 0, y: 16 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ delay }}
+    style={{
+      background: T.card, border: `1.5px solid ${T.border}`,
+      borderRadius: 16, overflow: "hidden", boxShadow: T.shadow,
+    }}
+  >
+    <div style={{ height: 3, background: T.line }} />
+    {children}
+  </motion.div>
+);
+
+// ── Period filter: Daily / Weekly / Monthly + mini calendar ───────────────────
+const PeriodFilter = ({ mode, setMode, dateVal, setDateVal }) => {
+  const today = todayLocal();
+  const handleMode = (m) => {
+    setMode(m);
+    setDateVal(m === "monthly" ? today.slice(0, 7) : today);
+  };
   return (
-    <div style={{ background: T.card, border: `1.5px solid ${T.border}`, borderRadius: 10, padding: "10px 14px", boxShadow: T.shadowMd }}>
-      <p style={{ color: T.text, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{label}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.fill, fontSize: 11, margin: "2px 0" }}>
-          {p.name}: <span style={{ fontWeight: 700 }}>{p.value}%</span>
-        </p>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      {["daily", "weekly", "monthly"].map((m) => (
+        <button
+          key={m}
+          onClick={() => handleMode(m)}
+          style={{
+            height: 30, padding: "0 12px", borderRadius: 8, fontSize: 12,
+            fontWeight: mode === m ? 700 : 500, cursor: "pointer",
+            border: `1.5px solid ${mode === m ? T.accent : T.border}`,
+            background: mode === m ? T.accentBg : "#fff",
+            color: mode === m ? T.accent : T.sub,
+          }}
+        >
+          {m.charAt(0).toUpperCase() + m.slice(1)}
+        </button>
       ))}
+      {mode === "monthly"
+        ? <input type="month" value={dateVal} onChange={(e) => setDateVal(e.target.value)} style={inputStyle} />
+        : <input type="date"  value={dateVal} onChange={(e) => setDateVal(e.target.value)} style={inputStyle} />
+      }
     </div>
   );
 };
 
-export default function TrainerDashboard() {
-  const { employees, attendance, sprints, sprintCohortStats } = useAppData();
-  const [cohortFilter, setCohortFilter] = useState("All");
-
-  // Flatten all attendance records from the date-keyed map
-  const allEntries = useMemo(() =>
-    Object.values(attendance).flat()
-  , [attendance]);
-
-  // Today's entries only — used for stat cards (Present/Late/Absent today)
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const todayEntries = useMemo(() =>
-    attendance[todayKey] ?? []
-  , [attendance, todayKey]);
-
-  // statusMap from today's records only so stat cards reflect today's attendance
-  const statusMap = useMemo(() => {
-    const map = {};
-    todayEntries.forEach((r) => {
-      const id = r.empId ?? r.employeeId;
-      if (id) map[String(id)] = r.status;
-    });
-    return map;
-  }, [todayEntries]);
-
-  // All unique cohorts from employees
-  const allCohorts = useMemo(() => {
-    const set = new Set(employees.map((e) => e.cohort).filter(Boolean));
-    return ["All", ...Array.from(set).sort()];
-  }, [employees]);
-
-  // Filtered employees by cohort — must be declared before cohortBreakdown
-  const filteredEmployees = useMemo(() =>
-    cohortFilter === "All" ? employees : employees.filter((e) => e.cohort === cohortFilter)
-  , [employees, cohortFilter]);
-
-  const total        = filteredEmployees.length;
-  const presentCount = filteredEmployees.filter((e) => statusMap[String(e.empId)] === "Present").length;
-  const lateCount    = filteredEmployees.filter((e) => statusMap[String(e.empId)] === "Late").length;
-  const absentCount  = filteredEmployees.filter((e) => statusMap[String(e.empId)] === "Absent").length;
-
-  const kpis = [
-    { title: "Total Students",  value: total,        icon: Users,     lightBg: T.accentBg,             iconColor: T.accent  },
-    { title: "Present",         value: presentCount, icon: UserCheck, lightBg: "rgba(5,150,105,0.08)", iconColor: "#059669" },
-    { title: "Late",            value: lateCount,    icon: Clock,     lightBg: T.amberBg,              iconColor: T.amber   },
-    { title: "Absent",          value: absentCount,  icon: UserX,     lightBg: T.redBg,                iconColor: T.red     },
-  ];
-
-  // Bar chart: attendance % per sprint per cohort
-  // Uses backend sprintCohortStats as primary source (DB-persisted data)
-  // Falls back to local allEntries if API stats not yet loaded
-  const cohortBarData = useMemo(() =>
-    sprints.map((sprint) => {
-      const apiStats = sprintCohortStats[sprint.id] ?? [];
-      if (apiStats.length > 0) {
-        // Build from backend cohort stats
-        const cohortStats = {};
-        const uniqueCohorts = [];
-        apiStats.forEach((stat) => {
-          const cohort = stat.cohort;
-          if (!cohort) return;
-          cohortStats[cohort] = stat.presentPercentage ?? 0;
-          uniqueCohorts.push(cohort);
-        });
-        return { sprint: sprint.title, ...cohortStats, _cohorts: uniqueCohorts };
-      }
-      // Fallback: derive from local attendance cache
-      const sprintRecords = allEntries.filter(
-        (r) => (r.sprint ?? r.sprintTitle ?? "") === sprint.title
-      );
-      const cohortStats = {};
-      const uniqueCohorts = [...new Set(sprintRecords.map((r) => r.cohort).filter(Boolean))];
-      uniqueCohorts.forEach((cohort) => {
-        const group   = sprintRecords.filter((r) => r.cohort === cohort);
-        const present = group.filter((r) => r.status === "Present").length;
-        cohortStats[cohort] = group.length ? Math.round((present / group.length) * 100) : 0;
-      });
-      return { sprint: sprint.title, ...cohortStats, _cohorts: uniqueCohorts };
-    })
-  , [sprints, allEntries, sprintCohortStats]);
-
-  const chartCohorts = useMemo(() => {
-    const set = new Set();
-    cohortBarData.forEach((d) => d._cohorts.forEach((c) => set.add(c)));
-    return Array.from(set).sort();
-  }, [cohortBarData]);
-
-  // Cohort breakdown table
-  // Primary: aggregate across all sprints from sprintCohortStats (backend)
-  // Fallback: derive from local allEntries
-  const cohortBreakdown = useMemo(() => {
-    const cohorts = allCohorts.filter((c) => c !== "All");
-
-    // Aggregate sprintCohortStats across all sprints for each cohort
-    const aggregated = {};
-    Object.values(sprintCohortStats).flat().forEach((stat) => {
-      const c = stat.cohort;
-      if (!c) return;
-      if (!aggregated[c]) aggregated[c] = { present: 0, late: 0, absent: 0, total: 0 };
-      aggregated[c].present += stat.presentDays ?? 0;
-      aggregated[c].late    += stat.lateDays    ?? 0;
-      aggregated[c].absent  += stat.absentDays  ?? 0;
-      aggregated[c].total   += stat.totalDays   ?? 0;
-    });
-
-    // If we have API data, use it
-    if (Object.keys(aggregated).length > 0) {
-      return cohorts
-        .filter((c) => aggregated[c])
-        .map((cohort) => {
-          const a   = aggregated[cohort];
-          const pct = a.total > 0 ? Math.round((a.present / a.total) * 100) : 0;
-          const empCount = employees.filter((e) => e.cohort === cohort).length;
-          return { cohort, total: empCount, present: a.present, late: a.late, absent: a.absent, pct };
-        });
+// ── Filter flat attendance records by period ──────────────────────────────────
+// records: flat array with `attendanceDate` field (YYYY-MM-DD)
+function filterRecordsByPeriod(records, mode, dateVal) {
+  return records.filter(({ attendanceDate }) => {
+    if (!attendanceDate) return false;
+    if (mode === "daily")   return attendanceDate === dateVal;
+    if (mode === "monthly") return attendanceDate.startsWith(dateVal);
+    if (mode === "weekly") {
+      const d   = new Date(dateVal + "T00:00:00");
+      const day = d.getDay();
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - ((day + 6) % 7));
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      const fmt = (dt) => dt.toISOString().slice(0, 10);
+      return attendanceDate >= fmt(mon) && attendanceDate <= fmt(sun);
     }
+    return false;
+  });
+}
 
-    // Fallback: derive from local attendance cache
-    return cohorts.map((cohort) => {
-      const group   = filteredEmployees.filter((e) => e.cohort === cohort);
-      const records = allEntries.filter((r) => r.cohort === cohort);
-      const present = records.filter((r) => r.status === "Present").length;
-      const late    = records.filter((r) => r.status === "Late").length;
-      const absent  = records.filter((r) => r.status === "Absent").length;
-      const pct     = records.length ? Math.round((present / records.length) * 100) : 0;
-      return { cohort, total: group.length, present, late, absent, pct };
+// ── Custom bar tooltip ────────────────────────────────────────────────────────
+const BarTooltip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div style={{
+      background: T.card, border: `1.5px solid ${T.border}`, borderRadius: 10,
+      padding: "10px 14px", fontSize: 12, boxShadow: T.shadowMd, minWidth: 170,
+    }}>
+      <p style={{ color: T.text, fontWeight: 700, margin: "0 0 4px" }}>{d.cohort}</p>
+      <p style={{ color: T.sub, margin: "0 0 2px" }}>Sprint: {d.sprintTitle}</p>
+      <p style={{ color: T.sub, margin: "0 0 2px" }}>Trainer: {d.trainerName}</p>
+      <p style={{ color: pctColor(d.pct), fontWeight: 700, margin: 0 }}>{d.pct}% attendance</p>
+    </div>
+  );
+};
+
+// ── Section 1: Cohort Attendance Bar Chart ────────────────────────────────────
+// Uses sprintAttendance (all historical + today) fetched in main component.
+const CohortBarChart = ({ sprints, sprintAttendance, trainerName }) => {
+  const [mode, setMode]       = useState("daily");
+  const [dateVal, setDateVal] = useState(todayLocal());
+
+  const barData = useMemo(() => {
+    const result = [];
+    sprints.forEach((sprint) => {
+      const allRecs    = sprintAttendance[sprint.id] || [];
+      const periodRecs = filterRecordsByPeriod(allRecs, mode, dateVal);
+      const cohortCodes = sprint.cohorts?.length
+        ? [...new Set(sprint.cohorts.map((c) => c.cohort).filter(Boolean))]
+        : [sprint.cohort].filter(Boolean);
+
+      cohortCodes.forEach((code) => {
+        const cohortRecs = periodRecs.filter((r) => r.cohort === code);
+        const present    = cohortRecs.filter((r) => r.status === "Present" || r.status === "Late").length;
+        const total      = cohortRecs.length;
+        const pct        = total > 0 ? Math.round((present / total) * 100) : 0;
+        result.push({ cohort: code, sprintTitle: sprint.title, trainerName, pct, present, total });
+      });
     });
-  }, [allCohorts, filteredEmployees, allEntries, sprintCohortStats, employees]);
-
-  // Per-sprint cohort breakdown — uses backend cohort-stats API data
-  // This shows actual DB-persisted stats, distinct from the local attendance cache
-  const sprintCohortBars = useMemo(() =>
-    sprints.map((sprint) => {
-      const apiStats = sprintCohortStats[sprint.id] ?? [];
-      // If we have API stats, use them
-      if (apiStats.length > 0) {
-        return {
-          sprint,
-          cohorts: apiStats.map((stat, idx) => ({
-            cohort: stat.cohort,
-            pct: stat.presentPercentage ?? 0,
-            total: stat.totalDays ?? 0,
-            present: stat.presentDays ?? 0,
-            late: stat.lateDays ?? 0,
-            absent: stat.absentDays ?? 0,
-            color: getCohortColor(stat.cohort, idx),
-          })),
-        };
-      }
-      // Fallback: derive from local attendance cache (before first API sync)
-      const sprintRecords = allEntries.filter(
-        (r) => (r.sprint ?? r.sprintTitle ?? "") === sprint.title
-      );
-      const uniqueCohorts = [...new Set(sprintRecords.map((r) => r.cohort).filter(Boolean))];
-      return {
-        sprint,
-        cohorts: uniqueCohorts.map((cohort, idx) => {
-          const group   = sprintRecords.filter((r) => r.cohort === cohort);
-          const present = group.filter((r) => r.status === "Present").length;
-          const late    = group.filter((r) => r.status === "Late").length;
-          const absent  = group.filter((r) => r.status === "Absent").length;
-          const pct     = group.length ? Math.round((present / group.length) * 100) : 0;
-          return { cohort, pct, total: group.length, present, late, absent, color: getCohortColor(cohort, idx) };
-        }),
-      };
-    })
-  , [sprints, allEntries, sprintCohortStats]);
+    return result;
+  }, [sprints, sprintAttendance, mode, dateVal, trainerName]);
 
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4 }}
-      style={{ background: T.bg, minHeight: "100vh", padding: "28px 24px" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+    <Section delay={0.1}>
+      <div style={{ padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <p style={{ color: T.text, fontSize: 14, fontWeight: 700, margin: 0 }}>Cohort Attendance %</p>
+          <p style={{ color: T.muted, fontSize: 12, margin: "2px 0 0" }}>Across all your assigned sprints</p>
+        </div>
+        <PeriodFilter mode={mode} setMode={setMode} dateVal={dateVal} setDateVal={setDateVal} />
+      </div>
 
-        {/* Header */}
-        <div style={{ display: "flex", flexDirection: "column", marginBottom: 8 }}>
-          <PageBanner
-            title="Trainer Dashboard"
-            gradient="linear-gradient(135deg, #0d9488 0%, #14b8a6 100%)"
-            shadow="4px 0 24px rgba(13,148,136,0.30)"
-            width="320px"
-            right={
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {/* Cohort filter */}
-                <select value={cohortFilter} onChange={(e) => setCohortFilter(e.target.value)}
-                  style={{ height: 36, borderRadius: 10, border: `1.5px solid ${T.border}`, background: "#fff", color: T.text, padding: "0 12px", fontSize: 13, outline: "none", cursor: "pointer" }}>
-                  {allCohorts.map((c) => <option key={c} value={c}>{c === "All" ? "All Cohorts" : c}</option>)}
-                </select>
-                <Link to="/trainer/attendance"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 18px", borderRadius: 12, background: T.accent, color: "#fff", fontWeight: 700, fontSize: 13, textDecoration: "none", boxShadow: T.accentGlow }}>
-                  Manage Attendance <ArrowRight size={14} />
-                </Link>
+      {barData.length === 0 ? (
+        <div style={{ padding: "40px 20px", textAlign: "center", color: T.muted, fontSize: 13 }}>
+          No attendance data for this period
+        </div>
+      ) : (
+        <div style={{ padding: "0 20px 20px" }}>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={barData} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+              <XAxis dataKey="cohort" tick={{ fontSize: 12, fill: T.sub }} axisLine={false} tickLine={false} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: T.muted }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+              <Tooltip content={<BarTooltip />} cursor={{ fill: T.accentBg }} />
+              <Bar dataKey="pct" radius={[6, 6, 0, 0]} maxBarSize={52}>
+                {barData.map((d, i) => <Cell key={i} fill={pctColor(d.pct)} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 8 }}>
+            {[["≥75%", T.green], ["50–74%", T.amber], ["<50%", T.red]].map(([label, color]) => (
+              <div key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.sub }}>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: color }} />
+                {label}
               </div>
-            }
-          />
-          <p style={{ color: T.muted, fontSize: 12, margin: 0 }}>
-            {cohortFilter === "All" ? "All cohorts · Today's attendance at a glance" : `Filtered by ${cohortFilter}`}
-          </p>
-        </div>
-
-        {/* KPI Cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14 }}>
-          {kpis.map((item, i) => (
-            <TrainerStatCard key={item.title} item={item} index={i} total={total} />
-          ))}
-        </div>
-
-        {/* Grouped Bar Chart — Attendance % by Sprint & Cohort */}
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-          style={{ background: T.card, border: `1.5px solid ${T.border}`, borderRadius: 16, overflow: "hidden", boxShadow: T.shadow }}>
-          <div style={{ height: 3, background: T.line }} />
-          <div style={{ padding: "18px 20px 4px" }}>
-            <p style={{ color: T.text, fontSize: 14, fontWeight: 700, margin: "0 0 2px" }}>Attendance % by Sprint &amp; Cohort</p>
-            <p style={{ color: T.muted, fontSize: 12, margin: "0 0 16px" }}>Present percentage per cohort across all sprints</p>
+            ))}
           </div>
-          <div style={{ padding: "0 16px 20px" }}>
-            {cohortBarData.length === 0 || chartCohorts.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, fontSize: 13 }}>No attendance data yet.</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={cohortBarData} barSize={22} barGap={4} barCategoryGap="25%">
-                  <CartesianGrid strokeDasharray="3 3" stroke={T.bg2} vertical={false} />
-                  <XAxis dataKey="sprint" tick={{ fill: T.muted, fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: T.muted, fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(0,0,0,0.03)" }} />
-                  <Legend wrapperStyle={{ fontSize: 11, color: T.sub, paddingTop: 12 }} />
-                  {chartCohorts.map((cohort, idx) => (
-                    <Bar key={cohort} dataKey={cohort} name={cohort} fill={getCohortColor(cohort, idx)} radius={[4, 4, 0, 0]} />
-                  ))}
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </motion.div>
+        </div>
+      )}
+    </Section>
+  );
+};
 
-        {/* Cohort Attendance Breakdown + Per-Sprint Cohort Bars */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+// ── Section 2: Today's Sprint Cards ──────────────────────────────────────────
+// Reads from AttendanceContext sessions (already populated by ensureSession in parent).
+// Column template shared by header and every data row.
+const COLS = "1fr 1.4fr 220px";
 
-          {/* Cohort breakdown table */}
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}
-            style={{ background: T.card, border: `1.5px solid ${T.border}`, borderRadius: 16, overflow: "hidden", boxShadow: T.shadow }}>
-            <div style={{ height: 3, background: T.line }} />
-            <div style={{ padding: "16px 20px", borderBottom: `1.5px solid ${T.border}` }}>
-              <p style={{ color: T.text, fontSize: 14, fontWeight: 700, margin: 0 }}>Attendance by Cohort</p>
-            </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: T.bg, borderBottom: `1.5px solid ${T.border}` }}>
-                  {["Cohort", "Total", "Present", "Late", "Absent", "%"].map((h) => (
-                    <th key={h} style={{ textAlign: "left", padding: "10px 16px", color: T.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {cohortBreakdown.map(({ cohort, total: t, present, late, absent, pct }, idx) => (
-                  <tr key={cohort} style={{ borderBottom: `1px solid ${T.border}`, transition: "background 0.12s" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = T.bg)}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
-                    <td style={{ padding: "12px 16px" }}>
-                      <CohortTag cohort={cohort} />
-                    </td>
-                    <td style={{ padding: "12px 16px", color: T.text, fontWeight: 600 }}>{t}</td>
-                    <td style={{ padding: "12px 16px", color: "#059669", fontWeight: 600 }}>{present}</td>
-                    <td style={{ padding: "12px 16px", color: T.amber, fontWeight: 600 }}>{late}</td>
-                    <td style={{ padding: "12px 16px", color: T.red, fontWeight: 600 }}>{absent}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 6, borderRadius: 4, background: T.bg2, overflow: "hidden" }}>
-                          <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ delay: 0.6 + idx * 0.1, duration: 0.7, ease: "easeOut" }}
-                            style={{ height: "100%", borderRadius: 4, background: getCohortColor(cohort, idx) }} />
-                        </div>
-                        <span style={{ color: T.accent, fontSize: 11, fontWeight: 700, minWidth: 32 }}>{pct}%</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {cohortBreakdown.length === 0 && (
-                  <tr><td colSpan={6} style={{ textAlign: "center", padding: "30px 0", color: T.muted, fontSize: 13 }}>No data available.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </motion.div>
+const TodaySprintCards = ({ sprints, sessions }) => {
+  const today = todayLocal();
 
-          {/* Per-sprint cohort attendance bars */}
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
-            style={{ background: T.card, border: `1.5px solid ${T.border}`, borderRadius: 16, padding: 20, boxShadow: T.shadow, position: "relative", overflow: "hidden" }}>
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: T.line }} />
-            <p style={{ color: T.text, fontSize: 14, fontWeight: 700, margin: "0 0 4px" }}>Sprint Cohort Breakdown</p>
-            <p style={{ color: T.muted, fontSize: 12, margin: "0 0 18px" }}>DB stats per cohort — "total" = attendance records (employees × days submitted)</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-              {sprintCohortBars.map(({ sprint, cohorts: bars }) => (
-                <div key={sprint.id}>
-                  <p style={{ color: T.sub, fontSize: 12, fontWeight: 700, margin: "0 0 8px" }}>{sprint.title}</p>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {bars.length === 0 && <p style={{ color: T.muted, fontSize: 11 }}>No submitted data yet</p>}
-                    {bars.map(({ cohort, pct, total: t, present, late, absent, color }) => (
-                      <div key={cohort}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                          <CohortTag cohort={cohort} />
-                          <span style={{ color, fontSize: 11, fontWeight: 700 }}>{pct}%</span>
-                        </div>
-                        <div style={{ height: 6, borderRadius: 4, background: T.bg2, overflow: "hidden" }}>
-                          <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }}
-                            transition={{ delay: 0.7, duration: 0.7, ease: "easeOut" }}
-                            style={{ height: "100%", borderRadius: 4, background: color }} />
-                        </div>
-                        <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 10, color: T.muted }}>
-                          <span style={{ color: "#059669" }}>✓ {present} present</span>
-                          {late > 0 && <span style={{ color: T.amber }}>⏱ {late} late</span>}
-                          {absent > 0 && <span style={{ color: T.red }}>✗ {absent} absent</span>}
-                          <span style={{ marginLeft: "auto" }}>
-                            {t} record{t !== 1 ? "s" : ""}
-                            {(() => {
-                              // Estimate days submitted: total / employees in this cohort
-                              const empCount = employees.filter((e) => e.cohort === cohort).length;
-                              if (empCount > 0 && t > 0) {
-                                const days = Math.round(t / empCount);
-                                return days > 0 ? ` · ${empCount} emp · ${days} day${days !== 1 ? "s" : ""}` : "";
-                              }
-                              return "";
-                            })()}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+  return (
+    <Section delay={0.2}>
+      <div style={{ padding: "16px 20px 12px" }}>
+        <p style={{ color: T.text, fontSize: 14, fontWeight: 700, margin: 0 }}>Today's Sprints</p>
+        <p style={{ color: T.muted, fontSize: 12, margin: "2px 0 0" }}>Live attendance for {today}</p>
+      </div>
+
+      {sprints.length === 0 ? (
+        <div style={{ padding: "32px 20px", textAlign: "center", color: T.muted, fontSize: 13 }}>
+          No sprints assigned to you
+        </div>
+      ) : (
+        <div style={{ padding: "0 20px 20px" }}>
+          {/* Header row */}
+          <div style={{
+            display: "grid", gridTemplateColumns: COLS, gap: 20,
+            padding: "0 4px 10px", borderBottom: `1.5px solid ${T.border}`, marginBottom: 2,
+          }}>
+            <span style={{ color: T.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>Sprint</span>
+            <span style={{ color: T.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>Progress</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+              {[["P", T.green], ["L", T.amber], ["A", T.red], ["Total", T.sub]].map(([label, color]) => (
+                <span key={label} style={{
+                  color, fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+                  letterSpacing: "0.07em", textAlign: "center",
+                }}>{label}</span>
               ))}
             </div>
-          </motion.div>
+          </div>
+
+          {/* Data rows — session passed directly from parent state (not re-called from context) */}
+          {sprints.map((sprint, i) => {
+            const key     = `${sprint.id}_${today}`;
+            const session = sessions[key];
+            return (
+              <SprintRow
+                key={sprint.id}
+                sprint={sprint}
+                session={session}
+                isLast={i === sprints.length - 1}
+              />
+            );
+          })}
         </div>
+      )}
+    </Section>
+  );
+};
+
+// ── Single sprint row ─────────────────────────────────────────────────────────
+const SprintRow = ({ sprint, session, isLast }) => {
+  const entries    = session?.entries || [];
+  const present    = entries.filter((e) => e.status === "Present").length;
+  const late       = entries.filter((e) => e.status === "Late").length;
+  const absent     = entries.filter((e) => e.status === "Absent").length;
+  const total      = entries.length;
+  const pct        = total > 0 ? Math.round(((present + late) / total) * 100) : 0;
+  // notStarted: session not yet loaded from API OR genuinely not started
+  const notStarted = !session || (!session.submitted && present === 0 && late === 0);
+
+  const cohortLabel = sprint.cohorts?.length
+    ? sprint.cohorts.map((c) => c.cohort).filter(Boolean).join(" / ")
+    : sprint.cohort || "—";
+
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: COLS, gap: 20, alignItems: "center",
+      padding: "13px 4px",
+      borderBottom: isLast ? "none" : `1px solid ${T.border}`,
+    }}>
+      {/* Col 1 — Sprint details */}
+      <div style={{ minWidth: 0 }}>
+        <p style={{
+          color: T.text, fontWeight: 700, fontSize: 13, margin: "0 0 3px",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{sprint.title}</p>
+        <p style={{
+          color: T.sub, fontSize: 11, margin: 0,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {sprint.sprintStart && sprint.sprintEnd
+            ? `${sprint.sprintStart} – ${sprint.sprintEnd}` : "—"}
+          {" · "}{cohortLabel}
+          {sprint.room ? ` · ${sprint.room}` : ""}
+        </p>
+      </div>
+
+      {/* Col 2 — Progress bar + % */}
+      <div style={{ minWidth: 0 }}>
+        {notStarted ? (
+          <span style={{
+            display: "inline-block", padding: "3px 10px", borderRadius: 20,
+            background: T.accentBg, color: T.accent, fontSize: 11, fontWeight: 700,
+            border: `1px solid ${T.accentBd}`,
+          }}>Not started</span>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, height: 7, borderRadius: 4, background: T.bg2, overflow: "hidden" }}>
+              <div style={{
+                height: "100%", width: `${pct}%`, borderRadius: 4,
+                background: pctColor(pct), transition: "width 0.4s",
+              }} />
+            </div>
+            <span style={{ color: pctColor(pct), fontWeight: 700, fontSize: 13, minWidth: 36, textAlign: "right" }}>
+              {pct}%
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Col 3 — P / L / A / Total */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+        {[[present, T.green], [late, T.amber], [absent, T.red], [total, T.sub]].map(([count, color], i) => (
+          <div key={i} style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "6px 4px", borderRadius: 10,
+            background: color + "14", border: `1px solid ${color}33`,
+          }}>
+            <span style={{ color, fontWeight: 800, fontSize: 15, lineHeight: 1 }}>{count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ── Section 3: Per-Sprint Pie Charts ─────────────────────────────────────────
+const PIE_COLORS = { Present: T.green, Late: T.amber, Absent: T.red };
+
+const SprintPieCharts = ({ sprints, sprintAttendance }) => {
+  const [mode, setMode]       = useState("daily");
+  const [dateVal, setDateVal] = useState(todayLocal());
+
+  return (
+    <Section delay={0.3}>
+      <div style={{ padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <p style={{ color: T.text, fontSize: 14, fontWeight: 700, margin: 0 }}>Attendance Breakdown per Sprint</p>
+          <p style={{ color: T.muted, fontSize: 12, margin: "2px 0 0" }}>Present / Late / Absent slices</p>
+        </div>
+        <PeriodFilter mode={mode} setMode={setMode} dateVal={dateVal} setDateVal={setDateVal} />
+      </div>
+
+      {sprints.length === 0 ? (
+        <div style={{ padding: "32px 20px", textAlign: "center", color: T.muted, fontSize: 13 }}>
+          No sprints assigned to you
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16, padding: "0 20px 20px" }}>
+          {sprints.map((sprint) => (
+            <SprintPie
+              key={sprint.id}
+              sprint={sprint}
+              records={sprintAttendance[sprint.id] || []}
+              mode={mode}
+              dateVal={dateVal}
+            />
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+};
+
+// ── Single sprint pie ─────────────────────────────────────────────────────────
+const SprintPie = ({ sprint, records, mode, dateVal }) => {
+  const pieData = useMemo(() => {
+    const periodRecs = filterRecordsByPeriod(records, mode, dateVal);
+    const counts = { Present: 0, Late: 0, Absent: 0 };
+    periodRecs.forEach((r) => { if (r.status in counts) counts[r.status]++; });
+    return Object.entries(counts).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
+  }, [records, mode, dateVal]);
+
+  const cohortLabel = sprint.cohorts?.map((c) => c.cohort).filter(Boolean).join(" / ") || sprint.cohort || "—";
+
+  return (
+    <div style={{ background: T.bg, border: `1.5px solid ${T.border}`, borderRadius: 14, padding: "14px" }}>
+      <p style={{ color: T.text, fontWeight: 700, fontSize: 13, margin: "0 0 2px" }}>{sprint.title}</p>
+      <p style={{ color: T.muted, fontSize: 11, margin: "0 0 8px" }}>{cohortLabel}</p>
+
+      {pieData.length === 0 ? (
+        <div style={{ textAlign: "center", color: T.muted, fontSize: 12, padding: "28px 0" }}>
+          No attendance data
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={180}>
+          <PieChart>
+            <Pie data={pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={68} paddingAngle={3} dataKey="value">
+              {pieData.map((d) => <Cell key={d.name} fill={PIE_COLORS[d.name] || T.accent} />)}
+            </Pie>
+            <Tooltip
+              formatter={(val, name) => [val, name]}
+              contentStyle={{ borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12 }}
+            />
+            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+          </PieChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+};
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+export default function TrainerDashboard() {
+  const { user }    = useAuth();
+  const { sprints } = useAppData();
+  const { sessions, ensureSession } = useAttendance();
+
+  const today       = todayLocal();
+  const trainerName = user?.name || "Trainer";
+
+  // sprintAttendance: { [sprintId]: flatRecord[] }
+  // Holds ALL historical records (for bar chart + pie charts).
+  const [sprintAttendance, setSprintAttendance] = useState({});
+
+  // Fetch all historical attendance records per sprint (bar chart + pie charts)
+  // AND call ensureSession for today so Today's Sprint Cards are populated from DB.
+  const fetchAll = useCallback(() => {
+    if (!sprints.length) return;
+    sprints.forEach((sprint) => {
+      // 1. Fetch all historical records for charts
+      attendanceService
+        .getAllBySprint(sprint.id)
+        .then((res) => {
+          const list = unwrapList(res);
+          if (!Array.isArray(list) || !list.length) return;
+          const normalised = list.map((r) => ({
+            attendanceDate: r.attendanceDate ?? r.date ?? "",
+            empId:          r.empId ?? "",
+            employeeId:     r.employeeId ?? null,
+            name:           r.employeeName ?? r.name ?? "",
+            cohort:         r.cohort ?? "",
+            technology:     r.technology ?? "",
+            status:         r.status ?? "Absent",
+          }));
+          setSprintAttendance((prev) => ({ ...prev, [sprint.id]: normalised }));
+        })
+        .catch(() => {});
+
+      // 2. Fetch today's session into AttendanceContext so Today's Sprint Cards
+      //    show real DB data on every page load / refresh.
+      ensureSession(sprint.id, today);
+    });
+  }, [sprints, ensureSession, today]);
+
+  // Run on mount and whenever sprints list changes
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  // After a new attendance submission, re-fetch so all sections update
+  // without requiring a full page reload.
+  // AttendanceContext.submitAttendance already calls setAttendanceForDate,
+  // but sprintAttendance (local state) needs a fresh getAllBySprint call.
+  // We watch sessions: when any session flips to submitted=true, re-fetch charts.
+  const submittedKeys = useMemo(
+    () => Object.values(sessions).filter((s) => s?.submitted).map((s) => `${s.sprintId}_${s.date}`).join(","),
+    [sessions],
+  );
+
+  useEffect(() => {
+    if (!submittedKeys) return;
+    // Re-fetch historical records so bar chart + pie charts include the new submission
+    sprints.forEach((sprint) => {
+      attendanceService
+        .getAllBySprint(sprint.id)
+        .then((res) => {
+          const list = unwrapList(res);
+          if (!Array.isArray(list) || !list.length) return;
+          const normalised = list.map((r) => ({
+            attendanceDate: r.attendanceDate ?? r.date ?? "",
+            empId:          r.empId ?? "",
+            employeeId:     r.employeeId ?? null,
+            name:           r.employeeName ?? r.name ?? "",
+            cohort:         r.cohort ?? "",
+            technology:     r.technology ?? "",
+            status:         r.status ?? "Absent",
+          }));
+          setSprintAttendance((prev) => ({ ...prev, [sprint.id]: normalised }));
+        })
+        .catch(() => {});
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submittedKeys]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.35 }}
+      style={{ background: T.bg, minHeight: "100vh", padding: "28px 24px" }}
+    >
+      <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+
+        <PageBanner
+          title="Trainer Dashboard"
+          gradient="linear-gradient(135deg, #0d9488 0%, #14b8a6 100%)"
+          shadow="4px 0 24px rgba(13,148,136,0.30)"
+          width="320px"
+        />
+
+        {/* Section 1 — Cohort Attendance Bar Chart */}
+        <CohortBarChart
+          sprints={sprints}
+          sprintAttendance={sprintAttendance}
+          trainerName={trainerName}
+        />
+
+        {/* Section 2 — Today's Sprint Cards
+            Reads directly from AttendanceContext sessions (populated by ensureSession above) */}
+        <TodaySprintCards sprints={sprints} sessions={sessions} />
+
+        {/* Section 3 — Per-Sprint Pie Charts */}
+        <SprintPieCharts
+          sprints={sprints}
+          sprintAttendance={sprintAttendance}
+        />
 
       </div>
     </motion.div>

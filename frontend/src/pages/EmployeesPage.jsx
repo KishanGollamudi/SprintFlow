@@ -1,10 +1,9 @@
 import { motion } from 'framer-motion';
 import { useMemo, useState } from "react";
-import { Users, Search, Pencil, Trash2, XCircle, CheckCircle, UserPlus, Code2 } from "lucide-react";
+import { Users, Search, Pencil, Trash2, XCircle, UserPlus, Code2 } from "lucide-react";
 import { useAppData } from "@/context/AppDataContext";
 import { G, inp, sel, lbl } from "@/theme/manager";
-
-const TECHNOLOGIES = ["Java", "Python", "Devops", "DotNet", "SalesForce"];
+import { useToast } from "@/context/ToastContext";
 
 const TECH_COLOR = {
   Java:       { color: "#f59e0b", bg: "rgba(245,158,11,0.12)"  },
@@ -14,34 +13,25 @@ const TECH_COLOR = {
   SalesForce: { color: "#00c896", bg: "rgba(0,200,150,0.12)"   },
 };
 
-const EMPTY_FORM = { name: "", empId: "", cohort: "", technology: "" };
+const EMPTY_FORM = { name: "", empId: "", cohort: "", technology: "", phone: "", email: "", department: "" };
 const EMPTY_ERRS = { name: "", empId: "", cohort: "", technology: "" };
 
 const FieldError = ({ msg }) =>
   msg ? <p style={{ color: G.red, fontSize: 11, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}><XCircle size={11} />{msg}</p> : null;
 
-const Toast = ({ toast }) =>
-  toast ? (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
-      background: toast.type === "success" ? "rgba(0,200,150,0.1)" : "rgba(244,63,94,0.1)",
-      border: `1px solid ${toast.type === "success" ? G.border : "rgba(244,63,94,0.2)"}`,
-      color: toast.type === "success" ? G.green : G.red }}>
-      {toast.type === "success" ? <CheckCircle size={15} /> : <XCircle size={15} />}
-      {toast.message}
-    </div>
-  ) : null;
-
 const EmployeesPage = () => {
   const { employees, addEmployee, updateEmployee, deleteEmployee } = useAppData();
+  // Use global toast instead of local inline alert card
+  const { toast } = useToast();
   const [form, setForm]         = useState(EMPTY_FORM);
   const [errs, setErrs]         = useState(EMPTY_ERRS);
   const [editId, setEditId]     = useState(null);
   const [search, setSearch]     = useState("");
   const [deleteId, setDeleteId] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [toast, setToast]       = useState(null);
 
-  const showToast = (type, message) => { setToast({ type, message }); setTimeout(() => setToast(null), 3000); };
+  // showToast is now a thin wrapper around the global toast system
+  const showToast = (type, message) => toast[type]?.(message);
 
   const validate = (name, value) => {
     if (name === "name")       return !value.trim() ? "Name is required." : !/^[a-zA-Z\s]+$/.test(value) ? "Letters only." : "";
@@ -72,7 +62,15 @@ const EmployeesPage = () => {
   };
 
   const handleEdit = (emp) => {
-    setForm({ name: emp.name, empId: emp.empId, cohort: emp.cohort, technology: emp.technology });
+    setForm({
+      name: emp.name ?? "",
+      empId: emp.empId ?? "",
+      cohort: emp.cohort ?? "",
+      technology: emp.technology ?? "",
+      phone: emp.phone ?? "",
+      email: emp.email ?? "",
+      department: emp.department ?? "",
+    });
     setErrs(EMPTY_ERRS); setEditId(emp.id); setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -82,15 +80,16 @@ const EmployeesPage = () => {
 
   const filtered = useMemo(() =>
     employees.filter((e) =>
-      e.name.toLowerCase().includes(search.toLowerCase()) ||
-      e.empId.toLowerCase().includes(search.toLowerCase()) ||
-      e.cohort.toLowerCase().includes(search.toLowerCase()) ||
-      e.technology.toLowerCase().includes(search.toLowerCase())
+      (e.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (e.empId ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (e.cohort ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (e.technology ?? "").toLowerCase().includes(search.toLowerCase())
     ), [employees, search]);
 
-  const techCounts = useMemo(() =>
-    TECHNOLOGIES.map((t) => ({ tech: t, count: employees.filter((e) => e.technology === t).length })).filter((x) => x.count > 0)
-  , [employees]);
+  const techCounts = useMemo(() => {
+    const techs = [...new Set(employees.map((e) => e.technology).filter(Boolean))];
+    return techs.map((tech) => ({ tech, count: employees.filter((e) => e.technology === tech).length }));
+  }, [employees]);
 
   const card = { background: G.card, border: `1px solid ${G.border}`, borderRadius: 14 };
 
@@ -115,7 +114,7 @@ const EmployeesPage = () => {
           )}
         </div>
 
-        {toast && <Toast toast={toast} />}
+        {/* Toast is now rendered globally via ToastProvider — removed inline card */}
 
         {/* Stat Cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 14 }}>
@@ -128,7 +127,7 @@ const EmployeesPage = () => {
               <p style={{ color: G.muted, fontSize: 11, margin: 0 }}>Total Employees</p>
             </div>
           </div>
-          {techCounts.slice(0, 3).map(({ tech, count }) => {
+          {techCounts.map(({ tech, count }) => {
             const c = TECH_COLOR[tech] || { color: G.sub, bg: "rgba(255,255,255,0.06)" };
             return (
     <motion.div
@@ -163,9 +162,12 @@ const EmployeesPage = () => {
             <form onSubmit={handleSubmit} noValidate>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 16, marginBottom: 20 }}>
                 {[
-                  { name: "name",   label: "Full Name",   placeholder: "e.g. Ashok Kumar", type: "text"   },
-                  { name: "empId",  label: "Employee ID", placeholder: "e.g. EMP001",      type: "text"   },
-                  { name: "cohort", label: "Cohort",      placeholder: "e.g. Java cohort 1", type: "text"   },
+                  { name: "name",       label: "Full Name",         placeholder: "e.g. Ashok Kumar",   type: "text" },
+                  { name: "empId",      label: "Employee ID",       placeholder: "e.g. EMP001",        type: "text" },
+                  { name: "cohort",     label: "Cohort",            placeholder: "e.g. Java cohort 1", type: "text" },
+                  { name: "phone",      label: "Phone (optional)",  placeholder: "e.g. 9876543210",    type: "text" },
+                  { name: "email",      label: "Email (optional)",  placeholder: "e.g. user@co.com",   type: "email" },
+                  { name: "department", label: "Dept (optional)",   placeholder: "e.g. Engineering",   type: "text" },
                 ].map(({ name, label, placeholder, type }) => (
                   <div key={name}>
                     <label style={lbl}>{label}</label>
@@ -179,7 +181,11 @@ const EmployeesPage = () => {
                   <select name="technology" value={form.technology} onChange={handleChange}
                     style={{ ...sel, borderColor: errs.technology ? G.red : G.border }}>
                     <option value="" style={{ background: G.card }}>Select technology</option>
-                    {TECHNOLOGIES.map((t) => <option key={t} value={t} style={{ background: G.card }}>{t}</option>)}
+                    {[...new Set(employees.map((e) => e.technology).filter(Boolean))].sort()
+                      .concat(["Java","Python","Devops","DotNet","SalesForce"].filter(
+                        (t) => !employees.some((e) => e.technology === t)
+                      ))
+                      .map((t) => <option key={t} value={t} style={{ background: G.card }}>{t}</option>)}
                   </select>
                   <FieldError msg={errs.technology} />
                 </div>

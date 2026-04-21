@@ -16,9 +16,9 @@ import {
 import { useAttendance } from "@/context/AttendanceContext";
 import { useSprints } from "@/context/SprintContext";
 import { T } from "@/theme/trainer";
+import { todayLocal, clampDate } from "@/utils/dateUtils";
 
 const STATUSES = ["Present", "Late", "Absent"];
-const TECH_STACKS = ["All", "Java", "Devops", "Python"];
 
 const STATUS_STYLES = {
   Present: {
@@ -31,8 +31,10 @@ const STATUS_STYLES = {
 };
 const STACK_STYLES = {
   Java: { color: "#0d9488", bg: "rgba(13,148,136,0.08)" },
-  DevOps: { color: "#0f766e", bg: "rgba(15,118,110,0.08)" },
+  Devops: { color: "#0f766e", bg: "rgba(15,118,110,0.08)" },
   Python: { color: "#14b8a6", bg: "rgba(20,184,166,0.08)" },
+  DotNet: { color: "#f59e0b", bg: "rgba(245,158,11,0.08)" },
+  SalesForce: { color: "#ec4899", bg: "rgba(236,72,153,0.08)" },
 };
 const statusConfig = {
   Scheduled: { color: T.accent, bg: T.accentBg },
@@ -64,14 +66,16 @@ export default function SprintAttendance() {
   } = useAttendance();
 
   const sprint = sprints.find((s) => String(s.id) === String(id));
-  const today = new Date().toISOString().split("T")[0];
-  const defaultDate = sprint
-    ? today >= sprint.startDate && today <= sprint.endDate
-      ? today
-      : sprint.startDate
-    : today;
+  const today = todayLocal();
 
-  const [selectedDate, setSelectedDate] = useState(defaultDate);
+  const getDefaultDate = (sp) => {
+    if (!sp) return today;
+    return today >= sp.startDate && today <= sp.endDate ? today : sp.startDate;
+  };
+
+  const [selectedDate, setSelectedDate] = useState(() =>
+    getDefaultDate(sprint),
+  );
   const [search, setSearch] = useState("");
   const [stackFilter, setStack] = useState("All");
   const [submitSuccess, setSubmitSuccess] = useState(false);
@@ -80,11 +84,22 @@ export default function SprintAttendance() {
   const [sendEmails, setSendEmails] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
 
+  // Fix #7 — update selectedDate when sprint loads after initial render
+  useEffect(() => {
+    if (sprint) {
+      const correct = getDefaultDate(sprint);
+      setSelectedDate((prev) => (prev === today ? correct : prev));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sprint?.id]);
+
   useEffect(() => {
     if (!sprint) return;
     setLoadingSession(true);
-    ensureSession(sprint.id, selectedDate).finally(() => setLoadingSession(false));
-  }, [selectedDate, sprint?.id]);
+    ensureSession(sprint.id, selectedDate).finally(() =>
+      setLoadingSession(false),
+    );
+  }, [selectedDate, sprint?.id, ensureSession]);
 
   const session = sprint
     ? getSession(sprint.id, selectedDate)
@@ -92,12 +107,21 @@ export default function SprintAttendance() {
   const attendees = session.entries;
   const isLocked = session.submitted;
 
+  const techStacks = useMemo(() => {
+    const unique = [
+      ...new Set(attendees.map((e) => e.techStack).filter(Boolean)),
+    ];
+    return ["All", ...unique.sort()];
+  }, [attendees]);
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return attendees.filter((e) => {
+      const idStr = String(e.empId ?? e.id ?? "");
       const matchSearch =
-        e.name.toLowerCase().includes(q) ||
-        String(e.id).toLowerCase().includes(q);
+        (e.name ?? "").toLowerCase().includes(q) ||
+        idStr.toLowerCase().includes(q) ||
+        (e.email ?? "").toLowerCase().includes(q);
       const matchStack = stackFilter === "All" || e.techStack === stackFilter;
       return matchSearch && matchStack;
     });
@@ -202,9 +226,10 @@ export default function SprintAttendance() {
   };
 
   const handleDownload = () => {
-    const header = "ID,Name,Tech Stack,Status,Date";
+    const header = "ID,Name,Email,Tech Stack,Status,Date";
     const rows = filtered.map(
-      (e) => `${e.id},${e.name},${e.techStack},${e.status},${selectedDate}`,
+      (e) =>
+        `${e.empId ?? e.id},${e.name},${e.email ?? ""},${e.techStack},${e.status},${selectedDate}`,
     );
     const csv = [header, ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -346,8 +371,21 @@ export default function SprintAttendance() {
                   📅 {sprint.startDate} → {sprint.endDate}
                 </span>
                 <span>⏰ {timeDisplay}</span>
-                <span>📍 {sprint.room}</span>
-                <span>👥 {sprint.cohort}</span>
+                <span>
+                  📍{" "}
+                  {sprint.room && sprint.room.includes(" - ")
+                    ? sprint.room.split(" - ")[1]
+                    : sprint.room}
+                </span>
+                <span>
+                  👥{" "}
+                  {sprint.cohorts && sprint.cohorts.length
+                    ? sprint.cohorts
+                        .map((p) => p.cohort)
+                        .filter(Boolean)
+                        .join(" / ")
+                    : sprint.cohort}
+                </span>
                 {sprint.trainer && <span>🧑🏫 {sprint.trainer}</span>}
               </div>
             </div>
@@ -367,9 +405,15 @@ export default function SprintAttendance() {
                 type="date"
                 value={selectedDate}
                 min={sprint.startDate}
-                max={sprint.endDate}
+                max={today}
                 onChange={(e) => {
-                  setSelectedDate(e.target.value);
+                  // Fix #8 — clamp keyboard-typed dates within sprint range
+                  const clamped = clampDate(
+                    e.target.value,
+                    sprint.startDate,
+                    today,
+                  );
+                  setSelectedDate(clamped);
                   setSubmitSuccess(false);
                 }}
                 style={{ ...inp, cursor: "pointer" }}
@@ -480,7 +524,7 @@ export default function SprintAttendance() {
               onChange={(e) => setStack(e.target.value)}
               style={{ ...inp, height: 38, cursor: "pointer" }}
             >
-              {TECH_STACKS.map((s) => (
+              {techStacks.map((s) => (
                 <option key={s} value={s}>
                   {s === "All" ? "All Tech Stacks" : s}
                 </option>
@@ -535,24 +579,41 @@ export default function SprintAttendance() {
             {!isLocked ? (
               <>
                 {/* Email notification toggle */}
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                >
                   <div
-                    onClick={() => setSendEmails(v => !v)}
+                    onClick={() => setSendEmails((v) => !v)}
                     style={{
-                      width: 36, height: 20, borderRadius: 10, position: "relative", cursor: "pointer",
+                      width: 36,
+                      height: 20,
+                      borderRadius: 10,
+                      position: "relative",
+                      cursor: "pointer",
                       background: sendEmails ? T.accent : T.border,
                       transition: "background 0.2s",
                       flexShrink: 0,
                     }}
                   >
-                    <div style={{
-                      position: "absolute", top: 2,
-                      left: sendEmails ? 18 : 2,
-                      width: 16, height: 16, borderRadius: "50%",
-                      background: "#fff",
-                      transition: "left 0.2s",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-                    }} />
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        left: sendEmails ? 18 : 2,
+                        width: 16,
+                        height: 16,
+                        borderRadius: "50%",
+                        background: "#fff",
+                        transition: "left 0.2s",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                      }}
+                    />
                   </div>
                   <span style={{ color: T.sub, fontSize: 12, fontWeight: 600 }}>
                     Notify absent employees
@@ -562,11 +623,17 @@ export default function SprintAttendance() {
                   onClick={handleSubmit}
                   disabled={isSubmitting}
                   style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: "8px 18px", borderRadius: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "8px 18px",
+                    borderRadius: 10,
                     background: isSubmitting ? "#0b6b4a" : T.accent,
-                    color: "#fff", fontWeight: 700, fontSize: 13,
-                    border: "none", cursor: isSubmitting ? "not-allowed" : "pointer",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    border: "none",
+                    cursor: isSubmitting ? "not-allowed" : "pointer",
                     boxShadow: T.accentGlow,
                   }}
                 >
@@ -696,7 +763,14 @@ export default function SprintAttendance() {
             )}
           </div>
           {loadingSession ? (
-            <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, fontSize: 13 }}>
+            <div
+              style={{
+                textAlign: "center",
+                padding: "40px 0",
+                color: T.muted,
+                fontSize: 13,
+              }}
+            >
               Loading attendance records…
             </div>
           ) : filtered.length === 0 ? (
@@ -725,22 +799,24 @@ export default function SprintAttendance() {
                     borderBottom: `1.5px solid ${T.border}`,
                   }}
                 >
-                  {["#", "ID", "Name", "Tech Stack", "Status"].map((h) => (
-                    <th
-                      key={h}
-                      style={{
-                        textAlign: "left",
-                        padding: "10px 16px",
-                        color: T.muted,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.06em",
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
+                  {["#", "ID", "Name", "Email", "Tech Stack", "Status"].map(
+                    (h) => (
+                      <th
+                        key={h}
+                        style={{
+                          textAlign: "left",
+                          padding: "10px 16px",
+                          color: T.muted,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.06em",
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ),
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -789,7 +865,7 @@ export default function SprintAttendance() {
                             color: T.muted,
                           }}
                         >
-                          {emp.id}
+                          {emp.empId ?? emp.id}
                         </td>
                         <td
                           style={{
@@ -799,6 +875,15 @@ export default function SprintAttendance() {
                           }}
                         >
                           {emp.name}
+                        </td>
+                        <td
+                          style={{
+                            padding: "12px 16px",
+                            color: T.sub,
+                            fontSize: 12,
+                          }}
+                        >
+                          {emp.email ?? "—"}
                         </td>
                         <td style={{ padding: "12px 16px" }}>
                           <span

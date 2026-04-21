@@ -2,7 +2,7 @@ import Sidebar from "@/components/Sidebar";
 import Header  from "@/components/Header";
 
 const MainLayout = ({ children }) => (
-  <div className="flex h-screen overflow-hidden bg-gray-50">
+  <div className="flex h-screen overflow-hidden" style={{ background: "inherit" }}>
     {/* nav landmark handled inside Sidebar */}
     <Sidebar />
 

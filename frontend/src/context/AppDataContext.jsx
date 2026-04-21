@@ -38,8 +38,9 @@ export const AppDataProvider = ({ children }) => {
   const [trainers, setTrainers] = useState([]);
   const [attendance, setAttendance] = useState({});
   const [sprintCohortStats, setSprintCohortStats] = useState({});
+  const [globalCohortStats, setGlobalCohortStats] = useState([]);
   const [extraCohortNames, setExtraCohortNames] = useState([]);
-  const [rooms, setRooms] = useState(STATIC_ROOMS);
+  const [rooms] = useState(STATIC_ROOMS);
 
   useEffect(() => {
     try {
@@ -123,12 +124,26 @@ export const AppDataProvider = ({ children }) => {
       .then((res) => setEmployees(unwrapList(res)))
       .catch(() => {});
 
+    // Fetch global cohort attendance stats for trainer dashboard
+    attendanceService
+      .getGlobalCohortStats()
+      .then((res) => setGlobalCohortStats(unwrapList(res)))
+      .catch(() => {});
+
     // /api/users is restricted to MANAGER — only fetch for that role
     if (role === "manager") {
       userService
-        .getHRBPs()
+        .getAllHRBPs()
         .then((res) => setHrbps(unwrapList(res)))
         .catch(() => {});
+      userService
+        .getAllTrainers()
+        .then((res) => setTrainers(unwrapList(res)))
+        .catch(() => {});
+    }
+    // HR needs Active trainers only for the CreateSprint trainer dropdown
+    // TRAINER role must NOT call /api/users — it is MANAGER-only (403)
+    if (role === "hr") {
       userService
         .getTrainers()
         .then((res) => setTrainers(unwrapList(res)))
@@ -143,7 +158,15 @@ export const AppDataProvider = ({ children }) => {
     sprintReq
       .then((res) => {
         const list = unwrapList(res);
-        setSprints(list);
+        // ensure unique by id
+        const seen = new Set();
+        const unique = list.filter((s) => {
+          if (!s || !s.id) return true;
+          if (seen.has(s.id)) return false;
+          seen.add(s.id);
+          return true;
+        });
+        setSprints(unique);
         // For each sprint: load cohort stats AND all attendance records
         list.forEach((s) => {
           // Cohort stats (for breakdown panel)
@@ -151,8 +174,38 @@ export const AppDataProvider = ({ children }) => {
             .getCohortStats(s.id)
             .then((r) => {
               const stats = unwrapList(r);
-              if (stats.length)
-                setSprintCohortStats((prev) => ({ ...prev, [s.id]: stats }));
+              if (stats.length) {
+                // If backend doesn't return `sessions`, compute from all attendance records
+                const needSessions = stats[0].sessions == null;
+                if (needSessions) {
+                  attendanceService
+                    .getAllBySprint(s.id)
+                    .then((allRes) => {
+                      const recs = unwrapList(allRes) || [];
+                      const dates = new Set(
+                        recs
+                          .map((rec) => rec.attendanceDate ?? rec.date)
+                          .filter(Boolean),
+                      );
+                      // attach sessions count to first cohort stat (used by dashboard)
+                      const patched = stats.map((st, idx) =>
+                        idx === 0 ? { ...st, sessions: dates.size } : st,
+                      );
+                      setSprintCohortStats((prev) => ({
+                        ...prev,
+                        [s.id]: patched,
+                      }));
+                    })
+                    .catch(() => {
+                      setSprintCohortStats((prev) => ({
+                        ...prev,
+                        [s.id]: stats,
+                      }));
+                    });
+                } else {
+                  setSprintCohortStats((prev) => ({ ...prev, [s.id]: stats }));
+                }
+              }
             })
             .catch(() => {});
 
@@ -169,19 +222,23 @@ export const AppDataProvider = ({ children }) => {
                 if (!dateKey) return;
                 if (!byDate[dateKey]) byDate[dateKey] = [];
                 byDate[dateKey].push({
-                  empId: rec.empId ?? rec.employeeId,
-                  name: rec.employeeName ?? rec.name ?? "",
-                  cohort: rec.cohort ?? "",
+                  // Store both empId (string e.g. "EMP001") and employeeId (numeric DB id)
+                  // so TrainerDashboard can match against employees.empId correctly
+                  sprintId:   s.id,
+                  empId:      rec.empId ?? "",
+                  employeeId: rec.employeeId ?? rec.empId ?? null,
+                  name:       rec.employeeName ?? rec.name ?? "",
+                  cohort:     rec.cohort ?? "",
                   technology: rec.technology ?? "",
-                  sprint: rec.sprintTitle ?? s.title ?? "",
-                  status: rec.status ?? "Absent",
-                  time: rec.checkInTime ?? null,
+                  sprint:     rec.sprintTitle ?? s.title ?? "",
+                  status:     rec.status ?? "Absent",
+                  time:       rec.checkInTime ?? null,
                 });
               });
               setAttendance((prev) => {
                 const merged = { ...prev };
                 Object.entries(byDate).forEach(([date, recs]) => {
-                  merged[date] = recs;
+                  merged[date] = [...(merged[date] || []), ...recs];
                 });
                 return merged;
               });
@@ -202,7 +259,8 @@ export const AppDataProvider = ({ children }) => {
       return;
     }
     const res = await employeeService.create(data);
-    setEmployees((p) => [...p, res.data]);
+    const created = res?.data ?? res;
+    setEmployees((p) => [...p, created]);
   };
   const updateEmployee = async (id, data) => {
     if (USE_MOCK) {
@@ -210,9 +268,8 @@ export const AppDataProvider = ({ children }) => {
       return;
     }
     const res = await employeeService.update(id, data);
-    setEmployees((p) =>
-      p.map((e) => (e.id === id ? { ...e, ...res.data } : e)),
-    );
+    const updated = res?.data ?? res;
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, ...updated } : e)));
   };
   const deleteEmployee = async (id) => {
     if (USE_MOCK) {
@@ -229,7 +286,13 @@ export const AppDataProvider = ({ children }) => {
       setHrbps((p) => [...p, { ...data, id: crypto.randomUUID() }]);
       return;
     }
-    const payload = { ...data, role: "HR", joinedDate: data.joined ?? data.joinedDate };
+    // Strip any `role` field from the form — DB Role enum must be "HR"
+    const { joined, role: _formRole, ...rest } = data;
+    const payload = {
+      ...rest,
+      role: "HR",
+      joinedDate: joined ?? data.joinedDate ?? null,
+    };
     const res = await userService.create(payload);
     const created = res?.data ?? res;
     setHrbps((p) => [...p, created]);
@@ -239,18 +302,36 @@ export const AppDataProvider = ({ children }) => {
       setHrbps((p) => p.map((h) => (h.id === id ? { ...h, ...data } : h)));
       return;
     }
-    const payload = { ...data, joinedDate: data.joined ?? data.joinedDate };
+    // Strip frontend-only 'joined' key; send only 'joinedDate' to backend
+    const { joined, ...rest } = data;
+    const payload = { ...rest, joinedDate: joined ?? data.joinedDate ?? null };
     const res = await userService.update(id, payload);
     const updated = res?.data ?? res;
     setHrbps((p) => p.map((h) => (h.id === id ? { ...h, ...updated } : h)));
   };
   const deleteHrbp = async (id) => {
     if (USE_MOCK) {
-      setHrbps((p) => p.filter((h) => h.id !== id));
+      setHrbps((p) =>
+        p.map((h) => (h.id === id ? { ...h, status: "Inactive" } : h)),
+      );
       return;
     }
     await userService.delete(id);
-    setHrbps((p) => p.filter((h) => h.id !== id));
+    setHrbps((p) =>
+      p.map((h) => (h.id === id ? { ...h, status: "Inactive" } : h)),
+    );
+  };
+  const restoreHrbp = async (id) => {
+    if (USE_MOCK) {
+      setHrbps((p) =>
+        p.map((h) => (h.id === id ? { ...h, status: "Active" } : h)),
+      );
+      return;
+    }
+    await userService.restore(id);
+    setHrbps((p) =>
+      p.map((h) => (h.id === id ? { ...h, status: "Active" } : h)),
+    );
   };
 
   // ── Trainers ──────────────────────────────────────────────
@@ -259,7 +340,15 @@ export const AppDataProvider = ({ children }) => {
       setTrainers((p) => [...p, { ...data, id: crypto.randomUUID() }]);
       return;
     }
-    const payload = { ...data, role: "TRAINER", joinedDate: data.joined ?? data.joinedDate };
+    // Strip frontend form's `role` field (trainerRole value like "Manager-Trainings")
+    // and map it to `trainerRole`. The DB Role enum must be "TRAINER".
+    const { joined, role: trainerRoleFromForm, ...rest } = data;
+    const payload = {
+      ...rest,
+      role: "TRAINER",
+      trainerRole: trainerRoleFromForm ?? data.trainerRole ?? null,
+      joinedDate: joined ?? data.joinedDate ?? null,
+    };
     const res = await userService.create(payload);
     const created = res?.data ?? res;
     setTrainers((p) => [...p, created]);
@@ -269,31 +358,110 @@ export const AppDataProvider = ({ children }) => {
       setTrainers((p) => p.map((t) => (t.id === id ? { ...t, ...data } : t)));
       return;
     }
-    const payload = { ...data, joinedDate: data.joined ?? data.joinedDate };
+    // Extract form's role field (trainerRole value) and map correctly
+    const { joined, role: trainerRoleFromForm, ...rest } = data;
+    const payload = {
+      ...rest,
+      trainerRole: trainerRoleFromForm ?? data.trainerRole ?? null,
+      joinedDate: joined ?? data.joinedDate ?? null,
+    };
     const res = await userService.update(id, payload);
     const updated = res?.data ?? res;
     setTrainers((p) => p.map((t) => (t.id === id ? { ...t, ...updated } : t)));
   };
   const deleteTrainer = async (id) => {
     if (USE_MOCK) {
-      setTrainers((p) => p.filter((t) => t.id !== id));
+      setTrainers((p) =>
+        p.map((t) => (t.id === id ? { ...t, status: "Inactive" } : t)),
+      );
       return;
     }
     await userService.delete(id);
-    setTrainers((p) => p.filter((t) => t.id !== id));
+    setTrainers((p) =>
+      p.map((t) => (t.id === id ? { ...t, status: "Inactive" } : t)),
+    );
+  };
+  const restoreTrainer = async (id) => {
+    if (USE_MOCK) {
+      setTrainers((p) =>
+        p.map((t) => (t.id === id ? { ...t, status: "Active" } : t)),
+      );
+      return;
+    }
+    await userService.restore(id);
+    setTrainers((p) =>
+      p.map((t) => (t.id === id ? { ...t, status: "Active" } : t)),
+    );
   };
 
   // ── Sprints (AppData — used by manager module) ────────────
   const addSprint = async (data) => {
-    if (USE_MOCK)
-      setSprints((p) => [...p, { ...data, id: crypto.randomUUID() }]);
+    // Allow callers to opt-out of making an API call by passing
+    // `_skipApi: true` on the payload (SprintContext uses this
+    // to avoid creating the same sprint twice).
+    if (data && data._skipApi) {
+      const copy = { ...data };
+      delete copy._skipApi;
+      setSprints((p) => {
+        const next = [...p, copy];
+        const seen = new Set();
+        return next.filter((s) => {
+          if (!s || !s.id) return true;
+          if (seen.has(s.id)) return false;
+          seen.add(s.id);
+          return true;
+        });
+      });
+      return;
+    }
+    if (USE_MOCK) {
+      setSprints((p) => {
+        const next = [...p, { ...data, id: crypto.randomUUID() }];
+        const seen = new Set();
+        return next.filter((s) => {
+          if (!s || !s.id) return true;
+          if (seen.has(s.id)) return false;
+          seen.add(s.id);
+          return true;
+        });
+      });
+      return;
+    }
+    const res = await sprintService.create(data);
+    const created = res?.data ?? res;
+    setSprints((p) => {
+      const next = [...p, created];
+      const seen = new Set();
+      return next.filter((s) => {
+        if (!s || !s.id) return true;
+        if (seen.has(s.id)) return false;
+        seen.add(s.id);
+        return true;
+      });
+    });
   };
   const updateSprint = async (id, data) => {
-    if (USE_MOCK)
+    if (USE_MOCK) {
       setSprints((p) => p.map((s) => (s.id === id ? { ...s, ...data } : s)));
+      return;
+    }
+    const res = await sprintService.update(id, data);
+    const updated = res?.data ?? res;
+    setSprints((p) => p.map((s) => (s.id === id ? { ...s, ...updated } : s)));
   };
   const deleteSprint = async (id) => {
-    if (USE_MOCK) setSprints((p) => p.filter((s) => s.id !== id));
+    if (USE_MOCK) {
+      setSprints((p) => p.filter((s) => s.id !== id));
+      return;
+    }
+    await sprintService.delete(id);
+    setSprints((p) => p.filter((s) => s.id !== id));
+  };
+
+  // Local-only status patch — no API call, used by SprintContext.updateStatus
+  // so manager dashboard reflects status changes made from trainer/HR sprint pages
+  const patchSprintStatus = (id, status) => {
+    setSprints((p) => p.map((s) => (s.id === id ? { ...s, status } : s)));
   };
 
   // ── Attendance (DailyAttendance page) ────────────────────
@@ -307,6 +475,7 @@ export const AppDataProvider = ({ children }) => {
         sprints,
         employees,
         sprintCohortStats,
+        globalCohortStats,
         hrbps,
         trainers,
         attendance,
@@ -319,12 +488,15 @@ export const AppDataProvider = ({ children }) => {
         addHrbp,
         updateHrbp,
         deleteHrbp,
+        restoreHrbp,
         addTrainer,
         updateTrainer,
         deleteTrainer,
+        restoreTrainer,
         addSprint,
         updateSprint,
         deleteSprint,
+        patchSprintStatus,
         getAttendanceForDate,
         setAttendanceForDate,
         rooms,

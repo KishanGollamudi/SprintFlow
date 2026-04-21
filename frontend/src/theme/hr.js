@@ -1,19 +1,19 @@
-// HR Module Theme — Rose & Warm Stone palette (#D45769, #D4CFC9)
+// HR Module Theme — Sea Blue palette (#1d6fa4, #38bdf8)
 export const H = {
-  bg:        "#fdf8f8",
-  bg2:       "#f5eeee",
+  bg:        "#f0f6ff",
+  bg2:       "#e4eef9",
   card:      "#ffffff",
-  border:    "#ead8d8",
-  accent:    "#D45769",
-  accentBg:  "rgba(212,87,105,0.07)",
-  accentBd:  "rgba(212,87,105,0.2)",
-  accentGlow:"0 4px 16px rgba(212,87,105,0.25)",
-  stone:     "#D4CFC9",
-  gradient:  "linear-gradient(135deg,#D45769 0%,#D4CFC9 100%)",
-  gradientR:  "linear-gradient(135deg,#D4CFC9 0%,#D45769 100%)",
-  text:      "#1f1214",
-  sub:       "#6b5b5e",
-  muted:     "#a8969a",
+  border:    "#c8daf0",
+  accent:    "#1d6fa4",
+  accentBg:  "rgba(29,111,164,0.07)",
+  accentBd:  "rgba(29,111,164,0.2)",
+  accentGlow:"0 4px 16px rgba(29,111,164,0.25)",
+  stone:     "#38bdf8",
+  gradient:  "linear-gradient(135deg,#1d6fa4 0%,#38bdf8 100%)",
+  gradientR: "linear-gradient(135deg,#38bdf8 0%,#1d6fa4 100%)",
+  text:      "#0c1e30",
+  sub:       "#3d6080",
+  muted:     "#7fa3c0",
   green:     "#10b981",
   greenBg:   "rgba(16,185,129,0.08)",
   greenBd:   "rgba(16,185,129,0.2)",
@@ -25,15 +25,15 @@ export const H = {
   redBd:     "rgba(239,68,68,0.2)",
   purple:    "#8b5cf6",
   purpleBg:  "rgba(139,92,246,0.08)",
-  shadow:    "0 1px 2px rgba(212,87,105,0.04), 0 4px 12px rgba(212,87,105,0.06)",
-  shadowMd:  "0 4px 20px rgba(212,87,105,0.10)",
+  shadow:    "0 1px 2px rgba(29,111,164,0.05), 0 4px 12px rgba(29,111,164,0.08)",
+  shadowMd:  "0 4px 20px rgba(29,111,164,0.12)",
 };
 
 export const hInp = {
   background:   "#ffffff",
-  border:       "1.5px solid #ead8d8",
+  border:       "1.5px solid #c8daf0",
   borderRadius: 10,
-  color:        "#1f1214",
+  color:        "#0c1e30",
   padding:      "9px 13px",
   fontSize:     13,
   outline:      "none",
@@ -46,7 +46,7 @@ export const hInp = {
 export const hSel = { ...hInp, height: 40, cursor: "pointer" };
 
 export const hLbl = {
-  color:         "#a8969a",
+  color:         "#7fa3c0",
   fontSize:      11,
   fontWeight:    700,
   textTransform: "uppercase",

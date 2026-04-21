@@ -1,0 +1,22 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto21
+  build:
+    commands:
+      - mvn clean package -DskipTests -q
+  post_build:
+    commands:
+      - echo Build completed on `date`
+
+artifacts:
+  files:
+    - target/sprintflow-*.jar
+    - Procfile
+  discard-paths: no
+
+cache:
+  paths:
+    - /root/.m2/**/*

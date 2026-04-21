@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { UserCheck, Users, Clock, XCircle, GraduationCap } from "lucide-react";
 import { useAppData } from "@/context/AppDataContext";
 import { useAuth } from "@/context/AuthContext";
+import { t } from "@/lib/i18n";
 
 const TECH_STYLE = {
   Java:       "bg-amber-100 text-amber-600 border border-amber-200",
@@ -75,25 +76,26 @@ const DailyAttendance = () => {
     [effectiveTrainers, trainerId]
   );
 
-  // Sprint assigned to this trainer — match by trainerId first, then department name
+  // Sprint assigned to this trainer — match by trainerId (DB id)
   const assignedSprint = useMemo(() => {
     if (!selectedTrainer) return null;
-    return (
-      sprints.find((s) => String(s.trainerId) === String(selectedTrainer.id)) ??
-      sprints.find((s) =>
-        s.title?.toLowerCase() === selectedTrainer.department?.toLowerCase()
-      ) ??
-      null
-    );
+    return sprints.find((s) => String(s.trainerId) === String(selectedTrainer.id)) ?? null;
   }, [selectedTrainer, sprints]);
 
   const records = getAttendanceForDate(date);
 
-  // Employees belonging to this sprint (technology matches sprint title)
+  // Employees belonging to this sprint — use cohort pairs for accurate matching
   const sprintEmployees = useMemo(() => {
     if (!assignedSprint) return [];
-    return employees.filter((e) =>
-      e.technology.toLowerCase() === assignedSprint.title.toLowerCase()
+    const pairs = assignedSprint.cohorts?.length
+      ? assignedSprint.cohorts
+      : [{ technology: assignedSprint.technology || "", cohort: assignedSprint.cohort || "" }];
+    return employees.filter((emp) =>
+      pairs.some(
+        (pair) =>
+          String(pair.technology || "").toLowerCase() === String(emp.technology || "").toLowerCase() &&
+          String(pair.cohort || "").toLowerCase() === String(emp.cohort || "").toLowerCase()
+      )
     );
   }, [employees, assignedSprint]);
 
@@ -150,7 +152,7 @@ const DailyAttendance = () => {
 
               {/* Date */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Date</label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.dateField')}</label>
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                   className="bg-white border-gray-300 text-gray-900" />
               </div>
@@ -159,7 +161,7 @@ const DailyAttendance = () => {
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                   <span className="inline-flex items-center gap-1.5">
-                    <GraduationCap className="h-3.5 w-3.5" /> Select Trainer
+                    <GraduationCap className="h-3.5 w-3.5" /> {t('label.selectTrainerField')}
                   </span>
                 </label>
                 <select value={trainerId} onChange={(e) => handleTrainerChange(e.target.value)}
@@ -176,7 +178,7 @@ const DailyAttendance = () => {
               {/* Cohort */}
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  Cohort <span className="normal-case text-gray-400 font-normal">(optional)</span>
+                  {t('label.cohortOptionalField')} <span className="normal-case text-gray-400 font-normal">(optional)</span>
                 </label>
                 <select value={cohort} onChange={(e) => setCohort(e.target.value)}
                   disabled={!ready || availableCohorts.length === 0}

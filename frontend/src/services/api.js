@@ -74,16 +74,19 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem("refreshToken");
       if (!refreshToken) {
         isRefreshing = false;
-        localStorage.clear();
+        localStorage.removeItem("accessToken");
+        localStorage.removeItem("refreshToken");
+        localStorage.removeItem("user");
         window.location.href = "/login";
         return Promise.reject(error);
       }
 
       try {
-        const refreshBase = import.meta.env.DEV
+        // Strip trailing /api from base URL to avoid double /api/api/auth/refresh
+        const rawBase = import.meta.env.DEV
           ? ""
-          : import.meta.env.VITE_API_BASE_URL || "";
-        const res = await axios.post(`${refreshBase}/api/auth/refresh`, null, {
+          : (import.meta.env.VITE_API_BASE_URL || "").replace(/\/api\/?$/i, "");
+        const res = await axios.post(`${rawBase}/api/auth/refresh`, null, {
           headers: { Authorization: `Bearer ${refreshToken}` },
         });
         const newToken = res.data?.data?.accessToken ?? res.data?.accessToken;
@@ -95,7 +98,9 @@ api.interceptors.response.use(
         return api(original);
       } catch (refreshError) {
         processQueue(refreshError, null);
-        localStorage.clear();
+        localStorage.removeItem("accessToken");
+        localStorage.removeItem("refreshToken");
+        localStorage.removeItem("user");
         window.location.href = "/login";
         return Promise.reject(refreshError);
       } finally {

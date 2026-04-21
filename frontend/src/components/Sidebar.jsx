@@ -35,23 +35,23 @@ const THEMES = {
     accentLine: "linear-gradient(90deg,#ccfbf1,#5eead4,#14b8a6,transparent)",
   },
   hr: {
-    bg: "linear-gradient(160deg,#7a1d2e 0%,#9e2a40 40%,#be3751 70%,#D45769 100%)",
+    bg: "linear-gradient(160deg,#0c3d5e 0%,#1d6fa4 50%,#38bdf8 100%)",
     border: "rgba(255,255,255,0.15)",
-    activeBg: "rgba(255,255,255,0.2)",
+    activeBg: "rgba(255,255,255,0.18)",
     activeBorder: "rgba(255,255,255,0.35)",
-    activeBar: "linear-gradient(180deg,#fecdd3,#fda4af)",
-    activeIcon: "#fecdd3",
+    activeBar: "linear-gradient(180deg,#bae6fd,#38bdf8)",
+    activeIcon: "#bae6fd",
     activeText: "#ffffff",
     idleIcon: "rgba(255,255,255,0.85)",
     idleText: "rgba(255,255,255,0.75)",
-    hoverBg: "rgba(255,255,255,0.15)",
+    hoverBg: "rgba(255,255,255,0.12)",
     divider: "rgba(255,255,255,0.15)",
     logoBg: "rgba(255,255,255,0.1)",
-    avatarBg: "linear-gradient(135deg,#9e2a40,#D45769)",
+    avatarBg: "linear-gradient(135deg,#0c3d5e,#38bdf8)",
     logoutHover: "rgba(255,255,255,0.12)",
     textPrimary: "#ffffff",
     textSub: "rgba(255,255,255,0.6)",
-    accentLine: "linear-gradient(90deg,#fecdd3,#fda4af,#D45769,transparent)",
+    accentLine: "linear-gradient(90deg,#bae6fd,#38bdf8,#1d6fa4,transparent)",
   },
   manager: {
     bg: "#1a1a2e",
@@ -78,11 +78,7 @@ const MENUS = {
   trainer: [
     { name: "Dashboard", path: "/", icon: LayoutDashboard },
     { name: "Sprints", path: "/sprints", icon: List },
-    {
-      name: "Attendance List",
-      path: "/trainer/attendance",
-      icon: ClipboardList,
-    },
+    { name: "Attendance List", path: "/trainer/attendance", icon: ClipboardList },
   ],
   hr: [
     { name: "HR Dashboard", path: "/hr", icon: LayoutDashboard },
@@ -241,7 +237,7 @@ const MenuItem = ({ item, index, open, theme, role, onCancelClose }) => {
                 ? theme.activeIcon
                 : !open && (role === "trainer" || role === "hr")
                   ? role === "hr"
-                    ? theme.activeIcon
+                    ? "#1d6fa4"
                     : "#0d9488"
                   : theme.idleIcon,
               flexShrink: 0,
@@ -520,7 +516,7 @@ const Sidebar = () => {
                     role === "trainer"
                       ? "#0f2827"
                       : role === "hr"
-                        ? "#ffffff"
+                        ? "#fff"
                         : "#2D5596",
                 }}
               >
@@ -532,7 +528,7 @@ const Sidebar = () => {
                     role === "trainer"
                       ? "#0d9488"
                       : role === "hr"
-                        ? "#fecdd3"
+                        ? "#bae6fd"
                         : "#EB4242",
                 }}
               >
@@ -548,7 +544,7 @@ const Sidebar = () => {
           <span
             style={{
               background: "rgba(255,255,255,0.15)",
-              color: "#fecdd3",
+              color: "#bae6fd",
               fontSize: 10,
               fontWeight: 700,
               padding: "3px 10px",

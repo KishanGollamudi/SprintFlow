@@ -1,22 +1,28 @@
-FROM maven:3.9.9-eclipse-temurin-21 AS builder
-
-WORKDIR /build
-
+# ── Build stage ───────────────────────────────────────────────
+FROM maven:3.9.6-eclipse-temurin-21 AS build
+WORKDIR /app
 COPY pom.xml .
-RUN mvn -B dependency:go-offline
-
+# Download dependencies first (cached layer)
+RUN mvn dependency:go-offline -q
 COPY src ./src
-RUN mvn -B clean package -DskipTests && \
-    artifact="$(find target -maxdepth 1 \( -name '*.jar' -o -name '*.war' \) | head -n 1)" && \
-    test -n "$artifact" && \
-    cp "$artifact" /build/app.jar
+RUN mvn clean package -DskipTests -q
 
-FROM eclipse-temurin:21-jre
-
+# ── Runtime stage ─────────────────────────────────────────────
+FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-COPY --from=builder /build/app.jar /app/app.jar
+# Non-root user for security
+RUN addgroup -S sprintflow && adduser -S sprintflow -G sprintflow
+USER sprintflow
 
+COPY --from=build /app/target/sprintflow-*.jar app.jar
+
+# AWS Elastic Beanstalk expects port 5000 by default
+# Override with PORT env var if needed
 EXPOSE 8080
 
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+ENTRYPOINT ["java", \
+  "-XX:+UseContainerSupport", \
+  "-XX:MaxRAMPercentage=75.0", \
+  "-Djava.security.egd=file:/dev/./urandom", \
+  "-jar", "app.jar"]

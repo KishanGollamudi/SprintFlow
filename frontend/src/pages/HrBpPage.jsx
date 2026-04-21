@@ -4,8 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { UserPlus, Users, Search, Pencil, Trash2, CheckCircle, XCircle, ShieldCheck, UserCheck } from "lucide-react";
+import { UserPlus, Users, Search, Pencil, Trash2, XCircle, ShieldCheck, UserCheck, RefreshCw, RotateCcw } from "lucide-react";
 import { useAppData } from "@/context/AppDataContext";
+import userService from "@/services/userService";
+import { useToast } from "@/context/ToastContext";
 const DEPARTMENTS = ["Engineering", "Design", "QA", "HR", "Operations", "Finance"];
 
 const STATUS_STYLE = {
@@ -19,38 +21,25 @@ const EMPTY_ERRS = { name: "", email: "", phone: "", department: "", joined: "" 
 const FieldError = ({ msg }) =>
   msg ? <p className="mt-1 text-xs text-red-600 flex items-center gap-1"><XCircle className="h-3 w-3" />{msg}</p> : null;
 
-const Toast = ({ toast }) =>
-  toast ? (
-    <div className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium ${
-      toast.type === "success"
-        ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
-        : "bg-red-50 text-red-600 border border-red-200"
-    }`}>
-      {toast.type === "success" ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
-      {toast.message}
-    </div>
-  ) : null;
-
 const HrBpPage = () => {
-  const { hrbps, addHrbp, updateHrbp, deleteHrbp } = useAppData();
+  const { hrbps, addHrbp, updateHrbp, deleteHrbp, restoreHrbp } = useAppData();
+  // Use global toast instead of local inline alert card
+  const { toast } = useToast();
   const [form, setForm]         = useState(EMPTY_FORM);
   const [errs, setErrs]         = useState(EMPTY_ERRS);
   const [editId, setEditId]     = useState(null);
   const [search, setSearch]     = useState("");
   const [deleteId, setDeleteId] = useState(null);
-  const [toast, setToast]       = useState(null);
   const [showForm, setShowForm] = useState(false);
 
-  const showToast = (type, message) => {
-    setToast({ type, message });
-    setTimeout(() => setToast(null), 3000);
-  };
+  // showToast wraps global toast — keeps existing call sites unchanged
+  const showToast = (type, message) => toast[type]?.(message);
 
   const filtered = useMemo(() =>
     hrbps.filter((h) =>
-      h.name.toLowerCase().includes(search.toLowerCase()) ||
-      h.email.toLowerCase().includes(search.toLowerCase()) ||
-      h.department.toLowerCase().includes(search.toLowerCase())
+      (h.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (h.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (h.department ?? "").toLowerCase().includes(search.toLowerCase())
     ), [hrbps, search]);
 
   const stats = useMemo(() => ({
@@ -97,7 +86,7 @@ const HrBpPage = () => {
   };
 
   const handleEdit = (h) => {
-    setForm({ name: h.name, email: h.email, phone: h.phone, department: h.department, status: h.status, joined: h.joined });
+    setForm({ name: h.name, email: h.email, phone: h.phone, department: h.department, status: h.status, joined: h.joined ?? h.joinedDate ?? "" });
     setErrs(EMPTY_ERRS); setEditId(h.id); setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -105,7 +94,25 @@ const HrBpPage = () => {
   const handleDelete = () => {
     deleteHrbp(deleteId);
     setDeleteId(null);
-    showToast("success", "HRBP removed successfully.");
+    showToast("success", "HRBP deactivated.");
+  };
+
+  const handleRestore = async (id) => {
+    try {
+      await restoreHrbp(id);
+      showToast("success", "HRBP restored successfully.");
+    } catch {
+      showToast("error", "Failed to restore HRBP.");
+    }
+  };
+
+  const handleResend = async (id) => {
+    try {
+      await userService.resendCredentials(id);
+      showToast("success", "Credentials resent successfully.");
+    } catch {
+      showToast("error", "Failed to resend credentials.");
+    }
   };
 
   const handleCancel = () => { setForm(EMPTY_FORM); setErrs(EMPTY_ERRS); setEditId(null); setShowForm(false); };
@@ -126,7 +133,7 @@ const HrBpPage = () => {
           )}
         </header>
 
-        {toast && <Toast toast={toast} />}
+        {/* Toast rendered globally via ToastProvider — removed inline card */}
 
         <div className="grid grid-cols-3 gap-4">
           {[
@@ -177,7 +184,7 @@ const HrBpPage = () => {
                     <FieldError msg={errs.email} />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Phone Number <span className="normal-case text-gray-400">(optional)</span></label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Phone <span className="normal-case text-gray-400">(optional)</span></label>
                     <Input name="phone" type="tel" value={form.phone} placeholder="10-digit number" onChange={handleChange}
                       className={`bg-white text-gray-900 placeholder:text-gray-400 ${errs.phone ? "border-red-400" : "border-gray-200"}`} />
                     <FieldError msg={errs.phone} />
@@ -253,7 +260,9 @@ const HrBpPage = () => {
                 </TableHeader>
                 <TableBody>
                   {filtered.map((h, i) => (
-                    <TableRow key={h.id} className="border-gray-100 hover:bg-gray-50 transition-colors">
+                    <TableRow key={h.id} className={`border-gray-100 transition-colors ${
+                      h.status === "Inactive" ? "opacity-50 bg-gray-50" : "hover:bg-gray-50"
+                    }`}>
                       <TableCell className="text-gray-400">{i + 1}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2.5">
@@ -266,12 +275,21 @@ const HrBpPage = () => {
                       <TableCell className="text-gray-600">{h.email}</TableCell>
                       <TableCell className="text-gray-600">{h.phone || "—"}</TableCell>
                       <TableCell><span className="rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-xs text-indigo-600 font-medium">{h.department}</span></TableCell>
-                      <TableCell className="text-gray-600">{h.joined}</TableCell>
+                      <TableCell className="text-gray-600">{h.joined ?? h.joinedDate ?? "—"}</TableCell>
                       <TableCell><span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[h.status] ?? STATUS_STYLE.Inactive}`}>{h.status}</span></TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Button size="sm" variant="ghost" onClick={() => handleEdit(h)} className="h-7 w-7 p-0 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50"><Pencil className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" onClick={() => setDeleteId(h.id)} className="h-7 w-7 p-0 text-gray-500 hover:text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /></Button>
+                          {h.status === "Active" ? (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => handleEdit(h)} className="h-7 w-7 p-0 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50" title="Edit"><Pencil className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" onClick={() => handleResend(h.id)} className="h-7 w-7 p-0 text-gray-500 hover:text-emerald-600 hover:bg-emerald-50" title="Resend Credentials"><RefreshCw className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" onClick={() => setDeleteId(h.id)} className="h-7 w-7 p-0 text-gray-500 hover:text-red-600 hover:bg-red-50" title="Deactivate"><Trash2 className="h-3.5 w-3.5" /></Button>
+                            </>
+                          ) : (
+                            <Button size="sm" variant="ghost" onClick={() => handleRestore(h.id)} className="h-7 px-2 text-xs text-emerald-600 hover:bg-emerald-50 border border-emerald-200" title="Restore">
+                              <RotateCcw className="h-3 w-3 mr-1" /> Restore
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -289,13 +307,13 @@ const HrBpPage = () => {
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-100"><Trash2 className="h-5 w-5 text-red-600" /></div>
                   <div>
-                    <p className="text-gray-900 font-semibold">Remove HRBP</p>
-                    <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone.</p>
+                    <p className="text-gray-900 font-semibold">Deactivate HRBP</p>
+                    <p className="text-xs text-gray-500 mt-0.5">The HRBP will be marked Inactive and can be restored later.</p>
                   </div>
                 </div>
-                <p className="text-sm text-gray-600">Are you sure you want to remove <span className="font-semibold text-gray-900">{hrbps.find((h) => h.id === deleteId)?.name}</span>?</p>
+                <p className="text-sm text-gray-600">Deactivate <span className="font-semibold text-gray-900">{hrbps.find((h) => h.id === deleteId)?.name}</span>? They will lose access but their data is preserved.</p>
                 <div className="flex gap-3 pt-1">
-                  <Button onClick={handleDelete} className="flex-1 bg-red-600 hover:bg-red-500 text-white">Yes, Remove</Button>
+                  <Button onClick={handleDelete} className="flex-1 bg-red-600 hover:bg-red-500 text-white">Yes, Deactivate</Button>
                   <Button variant="ghost" onClick={() => setDeleteId(null)} className="flex-1 text-gray-500 hover:text-gray-900 border border-gray-200">Cancel</Button>
                 </div>
               </CardContent>

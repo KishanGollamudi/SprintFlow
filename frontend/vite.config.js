@@ -21,7 +21,7 @@ export default defineConfig({
     // Normalize VITE_API_BASE_URL to remove any trailing '/api' so we don't end up
     // proxying '/api' -> 'http://host/api' (which would produce '/api/api/...').
     proxy: (() => {
-      const raw = process.env.VITE_API_BASE_URL || "http://localhost:8080";
+      const raw = process.env?.VITE_API_BASE_URL || "http://localhost:8080";
       const normalized = raw.replace(/\/$/, "").replace(/\/api$/i, "");
       return {
         "/api": {

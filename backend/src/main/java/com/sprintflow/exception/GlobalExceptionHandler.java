@@ -7,10 +7,14 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.time.LocalDateTime;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
     
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiResponseDTO<?>> handleResourceNotFoundException(
@@ -63,7 +67,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponseDTO<?>> handleGlobalException(
             Exception ex, WebRequest request) {
-        
+
+        log.error("Unhandled exception at {}: {}", request.getDescription(false), ex.getMessage(), ex);
+
         ApiResponseDTO<?> response = ApiResponseDTO.builder()
                 .success(false)
                 .message("An internal server error occurred")

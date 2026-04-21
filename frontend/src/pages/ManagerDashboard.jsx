@@ -1,11 +1,12 @@
 import { motion } from "framer-motion";
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Users, TrendingUp, ArrowRight, BarChart3 } from "lucide-react";
+import { Users, ArrowRight, BarChart3 } from "lucide-react";
 import { useAppData } from "@/context/AppDataContext";
 import { useAuth } from "@/context/AuthContext";
 import { B } from "@/theme/manager";
 import PageBanner from "@/components/PageBanner";
+import StatCard from "@/components/ui/StatCard";
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, AreaChart, Area,
@@ -135,11 +136,16 @@ const SprintCard = ({ s, idx }) => (
         </span>
       </div>
       <div style={{ height: 5, background: B.bg2, borderRadius: 4, overflow: "hidden" }}>
-        <div style={{
-          height: "100%", width: `${s.rate}%`,
-          background: SPRINT_COLORS[idx % SPRINT_COLORS.length],
-          borderRadius: 4, transition: "width 0.6s ease",
-        }} />
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${s.rate}%` }}
+          transition={{ duration: 0.7, ease: "easeOut", delay: 0.2 }}
+          style={{
+            height: "100%",
+            background: SPRINT_COLORS[idx % SPRINT_COLORS.length],
+            borderRadius: 4,
+          }}
+        />
       </div>
     </div>
   </div>
@@ -149,55 +155,58 @@ const SprintCard = ({ s, idx }) => (
    Main Dashboard
 ══════════════════════════════════════════ */
 const Dashboard = () => {
-  const { sprints, employees, hrbps, trainers, attendance } = useAppData();
+  const { sprints, employees, hrbps, trainers, globalCohortStats, sprintCohortStats } = useAppData();
   const { user } = useAuth();
 
+  // Compute totals from globalCohortStats (real DB data)
   const totalRecords = useMemo(
-    () => Object.values(attendance).reduce((s, d) => s + d.length, 0),
-    [attendance],
+    () => globalCohortStats.reduce((s, c) => s + (Number(c.totalDays) || 0), 0),
+    [globalCohortStats],
   );
   const presentCount = useMemo(
-    () => Object.values(attendance).reduce((s, d) => s + d.filter((r) => r.status === "Present").length, 0),
-    [attendance],
+    () => globalCohortStats.reduce((s, c) => s + (Number(c.presentDays) || 0), 0),
+    [globalCohortStats],
   );
   const overallRate = totalRecords > 0 ? Math.round((presentCount / totalRecords) * 100) : 0;
 
   const monthlyData = useMemo(() => {
-    const year = new Date().getFullYear();
+    // Build from sprintCohortStats grouped by sprint start month
     const buckets = MONTH_NAMES.map((m) => ({ month: m, Present: 0, Absent: 0, Late: 0 }));
-    Object.entries(attendance).forEach(([date, records]) => {
-      const d = new Date(date);
+    const year = new Date().getFullYear();
+    sprints.forEach((s) => {
+      if (!s.startDate) return;
+      const d = new Date(s.startDate);
       if (d.getFullYear() !== year) return;
       const idx = d.getMonth();
-      records.forEach((r) => {
-        if (r.status === "Present") buckets[idx].Present++;
-        else if (r.status === "Absent") buckets[idx].Absent++;
-        else if (r.status === "Late")   buckets[idx].Late++;
+      const stats = sprintCohortStats[s.id] ?? [];
+      stats.forEach((c) => {
+        buckets[idx].Present += Number(c.presentDays) || 0;
+        buckets[idx].Late    += Number(c.lateDays)    || 0;
+        buckets[idx].Absent  += Number(c.absentDays)  || 0;
       });
     });
     return buckets;
-  }, [attendance]);
+  }, [sprints, sprintCohortStats]);
 
   const sprintAnalytics = useMemo(
     () => sprints.map((s) => {
-      const enrolled = employees.filter((e) => e.technology.toLowerCase() === s.title.toLowerCase()).length;
-      let sessions = new Set(), totalPresent = 0, totalRec = 0;
-      Object.entries(attendance).forEach(([date, records]) => {
-        const recs = records.filter((r) => r.sprint === s.title);
-        if (recs.length) sessions.add(date);
-        recs.forEach((r) => { totalRec++; if (r.status !== "Absent") totalPresent++; });
-      });
-      const rate = totalRec > 0 ? Math.round((totalPresent / totalRec) * 100) : 0;
-      return { ...s, enrolled, sessions: sessions.size, present: totalPresent, rate };
+      const enrolled     = s.employeeCount ?? 0;
+      const cohortStats  = sprintCohortStats[s.id] ?? [];
+      const totalPresent = cohortStats.reduce((sum, c) => sum + (Number(c.presentDays) || 0), 0);
+      const totalLate    = cohortStats.reduce((sum, c) => sum + (Number(c.lateDays)    || 0), 0);
+      const totalRec     = cohortStats.reduce((sum, c) => sum + (Number(c.totalDays)   || 0), 0);
+      const sessions     = cohortStats.length > 0 ? (cohortStats[0].sessions ?? 0) : 0;
+      const rate = totalRec > 0 ? Math.round(((totalPresent + totalLate) / totalRec) * 100) : 0;
+      return { ...s, enrolled, sessions, present: totalPresent, rate };
     }),
-    [sprints, employees, attendance],
+    [sprints, sprintCohortStats],
   );
 
-  // Derived KPI values
+  // Derived KPI values — only count Active users
   const kpis = [
-    { label: "Total Employees",  value: employees.length, sub: "Registered",            change: null,    status: "up"   },
-    { label: "Total HRBPs",      value: hrbps.length,     sub: "HR Business Partners",  change: null,    status: "up"   },
-    { label: "Total Trainers",   value: trainers.length,  sub: "Sprint trainers",        change: null,    status: "up"   },
+    { label: "Total Employees",  value: employees.length,                                    sub: "Registered",            change: null,    status: "up"   },
+    { label: "Total HRBPs",      value: hrbps.filter((h) => h.status === "Active").length,   sub: "HR Business Partners",  change: null,    status: "up"   },
+    { label: "Total Trainers",   value: trainers.filter((t) => t.status === "Active").length, sub: "Sprint trainers",        change: null,    status: "up"   },
     {
       label: "Attendance Rate", value: `${overallRate}%`, sub: "Overall present rate",
       change: overallRate >= 75 ? "On Track" : "Needs Attention",
@@ -210,7 +219,7 @@ const Dashboard = () => {
     ? sprintAnalytics.reduce((a, b) => (b.rate > a.rate ? b : a))
     : null;
 
-  // User growth: present this month vs last month
+  // User growth: present this month vs last month (from monthly chart data)
   const now = new Date();
   const thisMonth = monthlyData[now.getMonth()]?.Present ?? 0;
   const lastMonth = monthlyData[Math.max(0, now.getMonth() - 1)]?.Present ?? 0;
@@ -246,9 +255,25 @@ const Dashboard = () => {
           <p style={{ color: B.sub, fontSize: 13, marginTop: -8 }}>Here's your team's performance at a glance.</p>
         </div>
 
-        {/* ── KPI Cards ── */}
+        {/* ── KPI Cards — using reusable StatCard ── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 16 }}>
-          {kpis.map((k) => <KpiCard key={k.label} {...k} />)}
+          {kpis.map((k, i) => (
+            <StatCard
+              key={k.label}
+              title={k.label}
+              value={k.value}
+              sub={k.sub}
+              index={i}
+              cardBg={B.card}
+              cardBorder={B.border}
+              textColor={B.text}
+              mutedColor={B.muted}
+              variant="hover-fill"
+              hoverGradient={k.status === "up" ? "#ecfdf5" : "#fff1f2"}
+              iconColor={k.status === "up" ? "#059669" : "#e11d48"}
+              iconBg={k.status === "up" ? "#ecfdf5" : "#fff1f2"}
+            />
+          ))}
         </div>
 
         {/* ── Sprint Analytics ── */}
@@ -317,10 +342,12 @@ const Dashboard = () => {
                   <span style={{ color: "#71717a", fontSize: 12, marginBottom: 2 }}>Target: 90%</span>
                 </div>
                 <div style={{ width: "100%", height: 6, background: "#3f3f46", borderRadius: 99, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", width: `${topSprint?.rate ?? 0}%`,
-                    background: "#fff", borderRadius: 99, transition: "width 0.6s ease",
-                  }} />
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${topSprint?.rate ?? 0}%` }}
+                    transition={{ duration: 0.7, ease: "easeOut", delay: 0.3 }}
+                    style={{ height: "100%", background: "#fff", borderRadius: 99 }}
+                  />
                 </div>
               </div>
             </div>

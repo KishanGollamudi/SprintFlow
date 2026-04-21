@@ -33,3 +33,21 @@ build/
 .vscode/
 
 .metadata
+
+### Runtime / temp files — never commit these ###
+server.log
+token.tmp
+*.log
+*.tmp
+
+### Sensitive files — never commit these ###
+HashGen.java
+application-prod.properties
+application-local.properties
+*.env
+.env
+
+### Docker deployment — generated on server, never commit ###
+docker/ssl/*.crt
+docker/ssl/*.key
+docker/ssl/*.pem

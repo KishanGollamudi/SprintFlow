@@ -6,7 +6,7 @@ import { useMessengerContext } from "@/context/MessengerContext";
 
 const ROLE_COLORS = {
   trainer: { dot: "bg-teal-500",  badge: "bg-teal-50  text-teal-700  ring-teal-200",   avatarGradient: "linear-gradient(135deg,#0d9488,#14b8a6)" },
-  hr:      { dot: "bg-rose-500",  badge: "bg-rose-50  text-rose-700  ring-rose-200",   avatarGradient: "linear-gradient(135deg,#a42e43,#D45769)"  },
+  hr:      { dot: "bg-sky-500",  badge: "bg-sky-50  text-sky-700  ring-sky-200",   avatarGradient: "linear-gradient(135deg,#1d6fa4,#38bdf8)"  },
   manager: { dot: "bg-orange-500",badge: "bg-orange-50 text-orange-700 ring-orange-200", avatarGradient: "linear-gradient(135deg,#111827,#374151)"  },
 };
 

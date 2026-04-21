@@ -32,6 +32,19 @@ const sprintService = {
   autoEnroll(sprintId) {
     return api.post(`/employees/sprint/${sprintId}/auto-enroll`);
   },
+  enrollEmployee(sprintId, employeeId) {
+    return api.post(`/sprints/${sprintId}/employees`, { employeeId });
+  },
+  removeEmployee(sprintId, employeeId) {
+    return api.delete(`/sprints/${sprintId}/employees/${employeeId}`);
+  },
+  // Check if a trainer has a time-slot conflict with the proposed sprint dates/times.
+  // Returns [] if no conflict, or array of conflicting SprintDTOs.
+  checkTrainerConflict({ trainerId, startDate, endDate, sprintStart, sprintEnd, excludeSprintId = null }) {
+    return api.get("/sprints/check-trainer-conflict", {
+      params: { trainerId, startDate, endDate, sprintStart, sprintEnd, excludeSprintId },
+    });
+  },
 };
 
 export default sprintService;

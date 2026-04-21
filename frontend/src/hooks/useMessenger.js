@@ -5,8 +5,12 @@ import api from "@/services/api";
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api")
   .replace(/\/api$/, "");
-const WS_URL = import.meta.env.VITE_USE_MOCK === "true" ? null : `${BASE_URL}/ws`;
+// VITE_WS_URL can be set separately if WebSocket goes through ALB directly (not CloudFront)
+const WS_URL = import.meta.env.VITE_USE_MOCK === "true"
+  ? null
+  : import.meta.env.VITE_WS_URL || `${BASE_URL}/ws`;
 const UNREAD_KEY = "sprintflow_unread";
+const READ_TIMESTAMPS_KEY = "sprintflow_read_timestamps";
 
 export const STATUS_OPTIONS = [
   { value: "online",  label: "Online",  color: "#10b981" },
@@ -24,13 +28,41 @@ function loadPersistedUnread(userEmail) {
     return JSON.parse(raw)[userEmail?.toLowerCase()] ?? {};
   } catch { return {}; }
 }
+
+function loadReadTimestamps(userEmail) {
+  try {
+    const raw = localStorage.getItem(READ_TIMESTAMPS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw)[userEmail?.toLowerCase()] ?? {};
+  } catch { return {}; }
+}
+
+function saveReadTimestamp(userEmail, conversationWith) {
+  try {
+    const raw = localStorage.getItem(READ_TIMESTAMPS_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    const userKey = userEmail?.toLowerCase();
+    if (!all[userKey]) all[userKey] = {};
+    all[userKey][conversationWith.toLowerCase()] = Date.now();
+    localStorage.setItem(READ_TIMESTAMPS_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
 function savePersistedUnread(userEmail, unread) {
   try {
     const raw = localStorage.getItem(UNREAD_KEY);
     const all = raw ? JSON.parse(raw) : {};
-    all[userEmail?.toLowerCase()] = unread;
+    // Clean up zero counts before saving
+    const cleaned = Object.fromEntries(
+      Object.entries(unread).filter(([, count]) => count > 0)
+    );
+    all[userEmail?.toLowerCase()] = cleaned;
     localStorage.setItem(UNREAD_KEY, JSON.stringify(all));
-  } catch {}
+  } catch {
+    /* ignore */
+  }
 }
 
 function unwrap(res) {
@@ -61,8 +93,7 @@ export function useMessenger(user) {
   const [unread,        setUnread]        = useState(() => loadPersistedUnread(user?.email));
 
   const clientRef      = useRef(null);
-  const activeChat     = useRef(null);
-  const activeChatRef  = useRef(null); // ref version for use in callbacks
+  const activeChatRef  = useRef(null);
 
   // Persist unread
   useEffect(() => {
@@ -87,16 +118,38 @@ export function useMessenger(user) {
         setPresence((prev) => ({ ...prev, ...p }));
       }).catch(() => {});
 
+    // Load unread counts from server
     api.get("/messages/unread-counts")
       .then((res) => {
         const map = unwrap(res) ?? {};
         if (typeof map !== "object" || Array.isArray(map)) return;
         const norm = {};
-        Object.entries(map).forEach(([k, v]) => { norm[k.toLowerCase()] = Number(v); });
+        Object.entries(map).forEach(([k, v]) => { 
+          const count = Number(v);
+          if (count > 0) {
+            norm[k.toLowerCase()] = count;
+          }
+        });
+        
+        // Check read timestamps to filter out recently read conversations
+        const readTimestamps = loadReadTimestamps(user?.email);
+        const now = Date.now();
+        const RECENT_READ_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+        
         setUnread((prev) => {
-          const merged = { ...prev };
-          Object.entries(norm).forEach(([k, v]) => { if (v > 0) merged[k] = v; });
-          return merged;
+          const filtered = {};
+          
+          Object.entries(norm).forEach(([key, count]) => {
+            const readTime = readTimestamps[key];
+            // If we marked this conversation as read recently, ignore server count
+            if (readTime && (now - readTime) < RECENT_READ_THRESHOLD) {
+              // Skip - recently marked as read locally
+              return;
+            }
+            filtered[key] = count;
+          });
+          
+          return filtered;
         });
       }).catch(() => {});
 
@@ -196,17 +249,38 @@ export function useMessenger(user) {
   }, []);
 
   // ── Mark as read ──────────────────────────────────────────────
-  const markRead = useCallback((otherEmail) => {
+  const markRead = useCallback(async (otherEmail) => {
     const key = (otherEmail ?? "").toLowerCase();
-    activeChat.current    = key;
     activeChatRef.current = key;
-    setUnread((prev) => prev[key] ? { ...prev, [key]: 0 } : prev);
+    
+    // Save timestamp of when we marked this conversation as read
+    saveReadTimestamp(myEmailRef.current, key);
+    
+    // Update local state immediately
+    setUnread((prev) => {
+      const updated = prev[key] ? { ...prev, [key]: 0 } : prev;
+      // Remove zero counts to clean up localStorage
+      const cleaned = Object.fromEntries(
+        Object.entries(updated).filter(([, count]) => count > 0)
+      );
+      return cleaned;
+    });
+    
+    // Send read receipt via WebSocket if connected
     const client = clientRef.current;
     if (client?.connected) {
       client.publish({
         destination: "/app/chat.read",
         body: JSON.stringify({ conversationWith: key }),
       });
+    }
+    
+    // Also send HTTP request to ensure server knows messages are read
+    try {
+      await api.post("/messages/mark-read", { conversationWith: key });
+    } catch (error) {
+      console.warn("Failed to mark messages as read on server:", error);
+      // Don't throw - local state is already updated
     }
   }, []);
 
@@ -286,7 +360,7 @@ export function useMessenger(user) {
 
             // Auto-add to contacts
             setContacts((prev) => {
-              if (prev.some((c) => c.email === other)) return prev;
+              if (prev.some((c) => (c.email ?? "").toLowerCase() === other)) return prev;
               return [...prev, {
                 email:  other,
                 name:   msg.senderName ?? other,
@@ -294,14 +368,18 @@ export function useMessenger(user) {
                 status: "online",
               }];
             });
-          } catch {}
+          } catch {
+            /* ignore */
+          }
         });
 
         client.subscribe("/topic/presence", (frame) => {
           try {
             const { email, status } = JSON.parse(frame.body);
             setPresence((prev) => ({ ...prev, [(email ?? "").toLowerCase()]: status }));
-          } catch {}
+          } catch {
+            /* ignore */
+          }
         });
       },
 
@@ -314,10 +392,10 @@ export function useMessenger(user) {
     return () => { client.deactivate(); };
   }, [user]);
 
-  // ── Polling fallback — reload history every 3s when chat is open ──
+  // ── Polling fallback — reload history every 3s only when WebSocket is disconnected ──
   useEffect(() => {
     const interval = setInterval(() => {
-      if (activeChatRef.current) {
+      if (activeChatRef.current && !clientRef.current?.connected) {
         loadHistory(activeChatRef.current);
       }
     }, 3000);

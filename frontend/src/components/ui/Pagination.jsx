@@ -12,7 +12,7 @@ export default function Pagination({ page, totalPages, onChange, theme = null })
   // Insert ellipsis markers
   const withEllipsis = [];
   visible.forEach((p, i) => {
-    if (i > 0 && p - visible[i - 1] > 1) withEllipsis.push('...');
+    if (i > 0 && p - visible[i - 1] > 1) withEllipsis.push(`ellipsis-${p}`);
     withEllipsis.push(p);
   });
 
@@ -41,9 +41,9 @@ export default function Pagination({ page, totalPages, onChange, theme = null })
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: 20 }}>
         {btn(page === 1, () => onChange(page - 1), <ChevronLeft size={14} />)}
-        {withEllipsis.map((p, i) =>
-          p === '...'
-            ? <span key={`e${i}`} style={{ color: theme.muted, fontSize: 13, paddingInline: 4 }}>…</span>
+        {withEllipsis.map((p) =>
+          typeof p === 'string'
+            ? <span key={p} style={{ color: theme.muted, fontSize: 13, paddingInline: 4 }}>…</span>
             : btn(false, () => onChange(p), p, p === page)
         )}
         {btn(page === totalPages, () => onChange(page + 1), <ChevronRight size={14} />)}
@@ -61,9 +61,9 @@ export default function Pagination({ page, totalPages, onChange, theme = null })
       >
         <ChevronLeft size={14} />
       </button>
-      {withEllipsis.map((p, i) =>
-        p === '...'
-          ? <span key={`e${i}`} className="text-gray-400 text-sm px-1">…</span>
+      {withEllipsis.map((p) =>
+        typeof p === 'string'
+          ? <span key={p} className="text-gray-400 text-sm px-1">…</span>
           : (
             <button
               key={p}

@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 
 const PageBanner = ({ title, gradient, shadow, width = "260px", right }) => {
   return (
-    <div className="relative w-full mb-6 h-12 flex items-center justify-between">
+    <div className="relative w-full h-12 flex items-center justify-between">
       <div className="relative h-full flex-1">
         <motion.div
           initial={{ width: 0 }}
@@ -12,7 +12,7 @@ const PageBanner = ({ title, gradient, shadow, width = "260px", right }) => {
           style={{
             background: gradient || "linear-gradient(90deg, #D45769 0%, #D4CFC9 100%)",
             clipPath: "polygon(0 0, 93% 0, 100% 100%, 0 100%)",
-            boxShadow: shadow || "4px 0 24px rgba(212,87,105,0.30)",
+            boxShadow: shadow || "4px 0 24px rgba(13,148,136,0.30)",
           }}
         >
           <motion.span

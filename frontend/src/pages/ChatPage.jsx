@@ -1,5 +1,5 @@
 // src/pages/ChatPage.jsx
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Send, Search, MessageSquare, Wifi, WifiOff, Smile, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -86,6 +86,7 @@ export default function ChatPage() {
     loadHistory(activeEmail);
     markRead(activeEmail);
     setShowEmoji(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeEmail]);
 
   // Auto-scroll on new messages
@@ -116,7 +117,7 @@ export default function ChatPage() {
       return searchResults.map((r) => ({
         ...r,
         status: presence[r.email] ?? r.status ?? "offline",
-        isNew: !contacts.some((c) => c.email === r.email),
+        isNew: !contacts.some((c) => (c.email ?? "").toLowerCase() === (r.email ?? "").toLowerCase()),
       }));
     }
     // Default: only chat-history contacts
@@ -274,12 +275,15 @@ export default function ChatPage() {
             <div style={{ padding: "32px 16px", textAlign: "center" }}>
               <MessageSquare size={28} color="#d1d5db" style={{ margin: "0 auto 8px" }} />
               <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>
-                {search.trim().length >= 2 ? "No users found" : "No conversations yet.\nSearch to start chatting."}
+                {search.trim().length >= 2 ? "No users found" : "No conversations yet."}
               </p>
+              {search.trim().length < 2 && (
+                <p style={{ color: "#9ca3af", fontSize: 12, margin: "4px 0 0" }}>Search to start chatting.</p>
+              )}
             </div>
           )}
           {sidebarList.map((c) => {
-            const isActive  = c.email === activeEmail;
+            const isActive  = (c.email ?? "").toLowerCase() === activeEmail;
             const unreadCnt = unread[c.email] ?? 0;
             const lastMsg   = (conversations[c.email] ?? []).slice(-1)[0];
             return (
@@ -324,7 +328,7 @@ export default function ChatPage() {
                   </div>
                   {lastMsg && (
                     <p style={{ fontSize: 11, color: "#6b7280", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {lastMsg.senderEmail === user?.email ? "You: " : ""}{lastMsg.content}
+                      {lastMsg.senderEmail === (user?.email ?? "").toLowerCase() ? "You: " : ""}{lastMsg.content}
                     </p>
                   )}
                 </div>
@@ -393,7 +397,7 @@ export default function ChatPage() {
                     );
                   }
                   const { msg } = item;
-                  const isOwn = msg.senderEmail === user?.email;
+                  const isOwn = msg.senderEmail === (user?.email ?? "").toLowerCase();
                   const color = rc(isOwn ? user?.role : msg.senderRole);
                   return (
                     <motion.div key={msg.id ?? i}

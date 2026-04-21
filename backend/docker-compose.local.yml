@@ -1,0 +1,11 @@
+# docker-compose.local.yml
+# Override for local development with different paths
+
+services:
+  backend:
+    build:
+      context: .  # Current directory for local
+      
+  frontend:
+    build:
+      context: D:/React js/demo/sprintflow-frontend-main  # Local frontend path

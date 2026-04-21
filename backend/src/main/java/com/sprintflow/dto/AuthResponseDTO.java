@@ -1,106 +1,71 @@
 package com.sprintflow.dto;
 
 public class AuthResponseDTO {
-    
-    private String token;
+
+    private String accessToken;   // frontend expects "accessToken"
     private String refreshToken;
-    private Long userId;
-    private String email;
-    private String firstName;
-    private String lastName;
-    private String role;
+    private UserInfo user;        // frontend expects nested user object
     private long expiresIn;
-    
-    // Constructors
+
     public AuthResponseDTO() {}
-    
-    public AuthResponseDTO(String token, Long userId, String email, String role) {
-        this.token = token;
-        this.userId = userId;
-        this.email = email;
-        this.role = role;
-        this.expiresIn = 86400; // 24 hours in seconds
-    }
-    
-    public AuthResponseDTO(String token, String refreshToken, Long userId, String email, 
-                          String firstName, String lastName, String role, long expiresIn) {
-        this.token = token;
+
+    public AuthResponseDTO(String accessToken, String refreshToken, UserInfo user, long expiresIn) {
+        this.accessToken = accessToken;
         this.refreshToken = refreshToken;
-        this.userId = userId;
-        this.email = email;
-        this.firstName = firstName;
-        this.lastName = lastName;
-        this.role = role;
-        this.expiresIn = expiresIn;
-    }
-    
-    // Getters and Setters
-    public String getToken() {
-        return token;
-    }
-    
-    public void setToken(String token) {
-        this.token = token;
-    }
-    
-    public String getRefreshToken() {
-        return refreshToken;
-    }
-    
-    public void setRefreshToken(String refreshToken) {
-        this.refreshToken = refreshToken;
-    }
-    
-    public Long getUserId() {
-        return userId;
-    }
-    
-    public void setUserId(Long userId) {
-        this.userId = userId;
-    }
-    
-    public String getEmail() {
-        return email;
-    }
-    
-    public void setEmail(String email) {
-        this.email = email;
-    }
-    
-    public String getFirstName() {
-        return firstName;
-    }
-    
-    public void setFirstName(String firstName) {
-        this.firstName = firstName;
-    }
-    
-    public String getLastName() {
-        return lastName;
-    }
-    
-    public void setLastName(String lastName) {
-        this.lastName = lastName;
-    }
-    
-    public String getRole() {
-        return role;
-    }
-    
-    public void setRole(String role) {
-        this.role = role;
-    }
-    
-    public long getExpiresIn() {
-        return expiresIn;
-    }
-    
-    public void setExpiresIn(long expiresIn) {
+        this.user = user;
         this.expiresIn = expiresIn;
     }
 
-	public void setActive(boolean active) {
-		// TODO Auto-generated method stub
-		
-	}
+    // Nested user info object matching frontend shape
+    public static class UserInfo {
+        private Long id;
+        private String name;
+        private String email;
+        private String role;     // lowercase: manager, hr, trainer
+        private String initials;
+        private String status;
+
+        public UserInfo() {}
+
+        public UserInfo(Long id, String name, String email, String role) {
+            this.id = id;
+            this.name = name;
+            this.email = email;
+            this.role = role != null ? role.toLowerCase() : null;
+            this.initials = name != null && name.length() >= 2
+                ? name.substring(0, 1).toUpperCase() + name.split(" ")[name.split(" ").length - 1].substring(0, 1).toUpperCase()
+                : "??";
+        }
+
+        public Long getId() { return id; }
+        public void setId(Long id) { this.id = id; }
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+
+        public String getEmail() { return email; }
+        public void setEmail(String email) { this.email = email; }
+
+        public String getRole() { return role; }
+        public void setRole(String role) { this.role = role; }
+
+        public String getInitials() { return initials; }
+        public void setInitials(String initials) { this.initials = initials; }
+
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
+    }
+
+    // Getters & Setters
+    public String getAccessToken() { return accessToken; }
+    public void setAccessToken(String accessToken) { this.accessToken = accessToken; }
+
+    public String getRefreshToken() { return refreshToken; }
+    public void setRefreshToken(String refreshToken) { this.refreshToken = refreshToken; }
+
+    public UserInfo getUser() { return user; }
+    public void setUser(UserInfo user) { this.user = user; }
+
+    public long getExpiresIn() { return expiresIn; }
+    public void setExpiresIn(long expiresIn) { this.expiresIn = expiresIn; }
 }

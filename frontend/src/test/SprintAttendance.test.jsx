@@ -2,10 +2,8 @@
  * Integration tests — SprintAttendance page
  * Route: /sprints/:id/attendance
  */
-import { screen, waitFor, within, cleanup, fireEvent } from '@testing-library/react';
+import { screen, waitFor, within, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { server } from '../mocks/server';
-import { http, HttpResponse } from 'msw';
 import { renderWithProviders, seedTrainerSession, clearSession } from './testUtils';
 import SprintAttendance from '@/features/sprint/pages/SprintAttendance';
 import { MOCK_SPRINT, MOCK_EMPLOYEES } from '../mocks/handlers';

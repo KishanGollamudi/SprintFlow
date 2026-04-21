@@ -57,6 +57,7 @@ const FlowingDots = ({
     };
 
     resizeCanvas();
+    timeRef.current = 0;
     const onResize = () => resizeCanvas();
     window.addEventListener('resize', onResize);
     canvas.addEventListener('mousemove', handleMouseMove);

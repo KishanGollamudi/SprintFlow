@@ -1,0 +1,3 @@
+# SSL certificates are generated on the server at deploy time.
+# Run the setup.sh script to generate them.
+# Files in this directory are NOT committed to git.

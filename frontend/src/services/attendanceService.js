@@ -60,16 +60,15 @@ const attendanceService = {
     return api.get("/attendance/cohort-stats", { params: { sprintId } });
   },
 
-  // ── Update single attendance record ─────────────────────────
-  // Used by trainer to change status before submission
-  updateRecord(sprintId, date, employeeId, status) {
-    return api.patch("/attendance/record", {
-      sprintId,
-      attendanceDate: date,
-      employeeId,
-      status,
-    });
+  // ── Get global cohort stats across ALL sprints ───────────────
+  getGlobalCohortStats() {
+    return api.get("/attendance/cohort-stats/all");
   },
+
+  // ── Update single attendance record ─────────────────────────
+  // NOTE: No backend PATCH /api/attendance/record endpoint exists.
+  // Status changes are applied locally and submitted via submit().
+  // updateRecord(sprintId, date, employeeId, status) — removed to avoid 404 calls
 };
 
 export default attendanceService;

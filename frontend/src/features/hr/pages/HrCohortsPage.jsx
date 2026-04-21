@@ -7,13 +7,12 @@ import {
   Trash2,
   Search,
   XCircle,
-  CheckCircle,
   ArrowLeft,
 } from "lucide-react";
 import { useAppData } from "@/context/AppDataContext";
-import { shortCohort } from "@/lib/cohortUtils";
 import { H, hInp, hSel, hLbl } from "@/theme/hr";
 import PageBanner from "@/components/PageBanner";
+import { useToast } from "@/context/ToastContext";
 
 const TECHNOLOGIES = ["Java", "Python", "Devops", "DotNet", "SalesForce"];
 
@@ -32,7 +31,6 @@ const EMPTY_FORM = {
   phone: "",
   technology: "",
   cohort: "",
-  department: "",
 };
 const EMPTY_ERRS = {
   name: "",
@@ -59,47 +57,30 @@ const FieldError = ({ msg }) =>
     </p>
   ) : null;
 
-const Toast = ({ toast }) =>
-  toast ? (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 16px",
-        borderRadius: 10,
-        fontSize: 13,
-        fontWeight: 500,
-        background: toast.type === "success" ? H.greenBg : H.redBg,
-        border: `1px solid ${toast.type === "success" ? H.greenBd : H.redBd}`,
-        color: toast.type === "success" ? H.green : H.red,
-      }}
-    >
-      {toast.type === "success" ? (
-        <CheckCircle size={15} />
-      ) : (
-        <XCircle size={15} />
-      )}
-      {toast.message}
-    </div>
-  ) : null;
-
 export default function HrCohortsPage() {
   const { employees, cohortNames, addCohort, removeCohort, addEmployee } =
     useAppData();
+  const { toast } = useToast();
+
+  // Derive technologies from DB employees, fallback to static list
+  const technologies = useMemo(() => {
+    const fromDB = [
+      ...new Set(employees.map((e) => e.technology).filter(Boolean)),
+    ].sort();
+    return fromDB.length > 0
+      ? fromDB
+      : ["Java", "Python", "Devops", "DotNet", "SalesForce"];
+  }, [employees]);
 
   const [newCohortName, setNewCohortName] = useState("");
   const [selectedCohort, setSelectedCohort] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
   const [errs, setErrs] = useState(EMPTY_ERRS);
   const [search, setSearch] = useState("");
-  const [toast, setToast] = useState(null);
   const [filterCohort, setFilterCohort] = useState("all");
 
-  const showToast = (type, message) => {
-    setToast({ type, message });
-    setTimeout(() => setToast(null), 3200);
-  };
+  // showToast wraps global toast — keeps existing call sites unchanged
+  const showToast = (type, message) => toast[type]?.(message);
 
   const countInCohort = (cohort) =>
     employees.filter((e) => e.cohort === cohort).length;
@@ -164,7 +145,6 @@ export default function HrCohortsPage() {
         cohort: form.cohort,
         ...(form.email.trim() && { email: form.email.trim() }),
         ...(form.phone.trim() && { phone: form.phone.trim() }),
-        ...(form.department.trim() && { department: form.department.trim() }),
       });
       showToast("success", "Employee added.");
       setForm({ ...EMPTY_FORM, cohort: selectedCohort || form.cohort });
@@ -230,7 +210,7 @@ export default function HrCohortsPage() {
         <PageBanner
           title="Cohorts & employees"
           gradient={H.gradient}
-          shadow="4px 0 24px rgba(212,87,105,0.28)"
+          shadow="4px 0 24px rgba(29,111,164,0.28)"
           width="420px"
         />
         <p style={{ color: H.sub, fontSize: 13, margin: "-8px 0 0" }}>
@@ -238,7 +218,7 @@ export default function HrCohortsPage() {
           stack.
         </p>
 
-        {toast && <Toast toast={toast} />}
+        {/* Toast rendered globally via ToastProvider */}
 
         {/* Create cohort */}
         <div style={{ ...card, padding: "20px 22px" }}>
@@ -301,7 +281,7 @@ export default function HrCohortsPage() {
                   e.target.style.borderColor = H.accent;
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = "#ead8d8";
+                  e.target.style.borderColor = H.border;
                 }}
               />
             </div>
@@ -449,7 +429,7 @@ export default function HrCohortsPage() {
               }}
             >
               <div>
-                <label style={hLbl}>Full name</label>
+                <label style={hLbl}>Full Name</label>
                 <input
                   name="name"
                   value={form.name}
@@ -457,7 +437,7 @@ export default function HrCohortsPage() {
                   placeholder="e.g. Priya Sharma"
                   style={{
                     ...hInp,
-                    borderColor: errs.name ? H.red : "#ead8d8",
+                    borderColor: errs.name ? H.red : H.border,
                   }}
                 />
                 <FieldError msg={errs.name} />
@@ -471,7 +451,7 @@ export default function HrCohortsPage() {
                   placeholder="e.g. EMP042"
                   style={{
                     ...hInp,
-                    borderColor: errs.empId ? H.red : "#ead8d8",
+                    borderColor: errs.empId ? H.red : H.border,
                   }}
                 />
                 <FieldError msg={errs.empId} />
@@ -484,13 +464,13 @@ export default function HrCohortsPage() {
                   onChange={handleChange}
                   style={{
                     ...hSel,
-                    borderColor: errs.cohort ? H.red : "#ead8d8",
+                    borderColor: errs.cohort ? H.red : H.border,
                   }}
                 >
                   <option value="">Select cohort</option>
                   {cohortNames.map((c) => (
                     <option key={c} value={c} title={c}>
-                      {shortCohort(c)}
+                      {c}
                     </option>
                   ))}
                 </select>
@@ -504,7 +484,7 @@ export default function HrCohortsPage() {
                   onChange={handleChange}
                   style={{
                     ...hSel,
-                    borderColor: errs.technology ? H.red : "#ead8d8",
+                    borderColor: errs.technology ? H.red : H.border,
                   }}
                 >
                   <option value="">Select technology</option>
@@ -526,7 +506,7 @@ export default function HrCohortsPage() {
                   placeholder="name@company.com"
                   style={{
                     ...hInp,
-                    borderColor: errs.email ? H.red : "#ead8d8",
+                    borderColor: errs.email ? H.red : H.border,
                   }}
                 />
                 <FieldError msg={errs.email} />
@@ -541,16 +521,7 @@ export default function HrCohortsPage() {
                   style={hInp}
                 />
               </div>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={hLbl}>Department (optional)</label>
-                <input
-                  name="department"
-                  value={form.department}
-                  onChange={handleChange}
-                  placeholder="e.g. Engineering"
-                  style={hInp}
-                />
-              </div>
+              {/* Department field removed (not required) */}
             </div>
             <button
               type="submit"

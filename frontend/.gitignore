@@ -36,3 +36,9 @@ coverage/
 
 # optional
 *.tsbuildinfo
+
+# Amazon Q
+.amazonq/
+
+# Playwright test results
+test-results/

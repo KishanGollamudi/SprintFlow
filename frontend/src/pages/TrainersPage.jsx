@@ -4,10 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { UserPlus, Users, Search, Pencil, Trash2, CheckCircle, XCircle, ShieldCheck, UserCheck, Mail } from "lucide-react";
+import { UserPlus, Users, Search, Pencil, Trash2, XCircle, ShieldCheck, UserCheck, RefreshCw, RotateCcw } from "lucide-react";
 import { useAppData } from "@/context/AppDataContext";
 import userService from "@/services/userService";
-import { t } from "@/lib/i18n";
+import { useToast } from "@/context/ToastContext";
 
 const ROLES       = ["Manager-Trainings", "Director-Trainings", "Delivery Head"];
 const DEPARTMENTS = ["Communication", "Java", "Python", "Devops", "R&D", "Scrum"];
@@ -28,45 +28,32 @@ const EMPTY_ERRS = { name: "", email: "", phone: "", role: "", department: "", j
 const FieldError = ({ msg }) =>
   msg ? <p className="mt-1 text-xs text-red-600 flex items-center gap-1"><XCircle className="h-3 w-3" />{msg}</p> : null;
 
-const Toast = ({ toast }) =>
-  toast ? (
-    <div className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium ${
-      toast.type === "success"
-        ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
-        : "bg-red-50 text-red-600 border border-red-200"
-    }`}>
-      {toast.type === "success" ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
-      {toast.message}
-    </div>
-  ) : null;
-
 const TrainersPage = () => {
-  const { trainers, addTrainer, updateTrainer, deleteTrainer } = useAppData();
+  const { trainers, addTrainer, updateTrainer, deleteTrainer, restoreTrainer } = useAppData();
+  // Use global toast instead of local inline alert card
+  const { toast } = useToast();
   const [form, setForm]         = useState(EMPTY_FORM);
   const [errs, setErrs]         = useState(EMPTY_ERRS);
   const [editId, setEditId]     = useState(null);
   const [search, setSearch]     = useState("");
   const [deleteId, setDeleteId] = useState(null);
-  const [toast, setToast]       = useState(null);
   const [showForm, setShowForm] = useState(false);
 
-  const showToast = (type, message) => {
-    setToast({ type, message });
-    setTimeout(() => setToast(null), 3000);
-  };
+  // showToast wraps global toast — keeps existing call sites unchanged
+  const showToast = (type, message) => toast[type]?.(message);
 
   const filtered = useMemo(() =>
-    trainers.filter((t) =>
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.email.toLowerCase().includes(search.toLowerCase()) ||
-      t.role.toLowerCase().includes(search.toLowerCase()) ||
-      t.department.toLowerCase().includes(search.toLowerCase())
+    trainers.filter((tr) =>
+      (tr.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (tr.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (tr.trainerRole ?? tr.role ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (tr.department ?? "").toLowerCase().includes(search.toLowerCase())
     ), [trainers, search]);
 
   const stats = useMemo(() => ({
     total:    trainers.length,
-    active:   trainers.filter((t) => t.status === "Active").length,
-    inactive: trainers.filter((t) => t.status === "Inactive").length,
+    active:   trainers.filter((tr) => tr.status === "Active").length,
+    inactive: trainers.filter((tr) => tr.status === "Inactive").length,
   }), [trainers]);
 
   const validateField = (name, value) => {
@@ -108,7 +95,7 @@ const TrainersPage = () => {
   };
 
   const handleEdit = (t) => {
-    setForm({ name: t.name, email: t.email, phone: t.phone, role: t.role, department: t.department, status: t.status, joined: t.joined });
+    setForm({ name: t.name, email: t.email, phone: t.phone ?? "", role: t.trainerRole ?? t.role ?? "", department: t.department ?? "", status: t.status, joined: t.joined ?? t.joinedDate ?? "" });
     setErrs(EMPTY_ERRS); setEditId(t.id); setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -116,7 +103,25 @@ const TrainersPage = () => {
   const handleDelete = () => {
     deleteTrainer(deleteId);
     setDeleteId(null);
-    showToast("success", "Trainer removed successfully.");
+    showToast("success", "Trainer deactivated.");
+  };
+
+  const handleRestore = async (id) => {
+    try {
+      await restoreTrainer(id);
+      showToast("success", "Trainer restored successfully.");
+    } catch {
+      showToast("error", "Failed to restore trainer.");
+    }
+  };
+
+  const handleResend = async (id) => {
+    try {
+      await userService.resendCredentials(id);
+      showToast("success", "Credentials resent successfully.");
+    } catch {
+      showToast("error", "Failed to resend credentials.");
+    }
   };
 
   const handleCancel = () => { setForm(EMPTY_FORM); setErrs(EMPTY_ERRS); setEditId(null); setShowForm(false); };
@@ -137,7 +142,7 @@ const TrainersPage = () => {
           )}
         </header>
 
-        {toast && <Toast toast={toast} />}
+        {/* Toast rendered globally via ToastProvider */}
 
         <div className="grid grid-cols-3 gap-4">
           {[
@@ -176,25 +181,25 @@ const TrainersPage = () => {
               <form onSubmit={handleSubmit} className="space-y-5" noValidate>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.fullName')}</label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Full Name</label>
                     <Input name="name" value={form.name} placeholder="Enter full name" onChange={handleChange}
                       className={`bg-white text-gray-900 placeholder:text-gray-400 ${errs.name ? "border-red-400" : "border-gray-200"}`} />
                     <FieldError msg={errs.name} />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.email')}</label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Email</label>
                     <Input name="email" type="email" value={form.email} placeholder="Enter email address" onChange={handleChange}
                       className={`bg-white text-gray-900 placeholder:text-gray-400 ${errs.email ? "border-red-400" : "border-gray-200"}`} />
                     <FieldError msg={errs.email} />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.phoneOptional')}</label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Phone (optional)</label>
                     <Input name="phone" type="tel" value={form.phone} placeholder="10-digit number" onChange={handleChange}
                       className={`bg-white text-gray-900 placeholder:text-gray-400 ${errs.phone ? "border-red-400" : "border-gray-200"}`} />
                     <FieldError msg={errs.phone} />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.role')}</label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Role</label>
                     <select name="role" value={form.role} onChange={handleChange}
                       className={`h-8 w-full rounded-lg border bg-white px-2.5 text-sm text-gray-900 focus:outline-none focus:border-indigo-400 ${errs.role ? "border-red-400" : "border-gray-200"}`}>
                       <option value="" className="bg-white text-gray-900">Select role</option>
@@ -203,7 +208,7 @@ const TrainersPage = () => {
                     <FieldError msg={errs.role} />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.department')}</label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Department</label>
                     <select name="department" value={form.department} onChange={handleChange}
                       className={`h-8 w-full rounded-lg border bg-white px-2.5 text-sm text-gray-900 focus:outline-none focus:border-indigo-400 ${errs.department ? "border-red-400" : "border-gray-200"}`}>
                       <option value="" className="bg-white text-gray-900">Select department</option>
@@ -212,7 +217,7 @@ const TrainersPage = () => {
                     <FieldError msg={errs.department} />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.status')}</label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Status</label>
                     <select name="status" value={form.status} onChange={handleChange}
                       className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2.5 text-sm text-gray-900 focus:outline-none focus:border-indigo-400">
                       <option value="Active" className="bg-white text-gray-900">Active</option>
@@ -220,7 +225,7 @@ const TrainersPage = () => {
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">{t('label.joiningDate')}</label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Joining Date</label>
                     <Input name="joined" type="date" value={form.joined} onChange={handleChange}
                       className={`bg-white text-gray-900 ${errs.joined ? "border-red-400" : "border-gray-200"}`} />
                     <FieldError msg={errs.joined} />
@@ -266,14 +271,16 @@ const TrainersPage = () => {
               <Table>
                 <TableHeader>
                   <TableRow className="border-gray-200">
-                    {[t('th.hash'),t('th.name'),t('th.role'),t('th.email'),t('th.phone'),t('th.department'),t('th.joined'),t('th.status'),t('th.actions')].map((h) => (
+                    {["#","Name","Role","Email","Phone","Department","Joined","Status","Actions"].map((h) => (
                       <TableHead key={h} className="text-gray-500">{h}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.map((t, i) => (
-                    <TableRow key={t.id} className="border-gray-100 hover:bg-gray-50 transition-colors">
+                    <TableRow key={t.id} className={`border-gray-100 transition-colors ${
+                      t.status === "Inactive" ? "opacity-50 bg-gray-50" : "hover:bg-gray-50"
+                    }`}>
                       <TableCell className="text-gray-400">{i + 1}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2.5">
@@ -283,16 +290,25 @@ const TrainersPage = () => {
                           <span className="text-gray-900 font-medium">{t.name}</span>
                         </div>
                       </TableCell>
-                      <TableCell><span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${ROLE_STYLE[t.role] ?? "bg-gray-100 text-gray-600 border border-gray-200"}`}>{t.role}</span></TableCell>
+                      <TableCell><span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${ROLE_STYLE[t.trainerRole ?? t.role] ?? "bg-gray-100 text-gray-600 border border-gray-200"}`}>{t.trainerRole ?? t.role ?? "—"}</span></TableCell>
                       <TableCell className="text-gray-600">{t.email}</TableCell>
                       <TableCell className="text-gray-600">{t.phone || "—"}</TableCell>
                       <TableCell><span className="rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-xs text-indigo-600 font-medium">{t.department}</span></TableCell>
-                      <TableCell className="text-gray-600">{t.joined}</TableCell>
+                      <TableCell className="text-gray-600">{t.joined ?? t.joinedDate ?? "—"}</TableCell>
                       <TableCell><span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[t.status] ?? STATUS_STYLE.Inactive}`}>{t.status}</span></TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Button size="sm" variant="ghost" onClick={() => handleEdit(t)} className="h-7 w-7 p-0 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50"><Pencil className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" onClick={() => setDeleteId(t.id)} className="h-7 w-7 p-0 text-gray-500 hover:text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /></Button>
+                          {t.status === "Active" ? (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => handleEdit(t)} className="h-7 w-7 p-0 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50" title="Edit"><Pencil className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" onClick={() => handleResend(t.id)} className="h-7 w-7 p-0 text-gray-500 hover:text-emerald-600 hover:bg-emerald-50" title="Resend Credentials"><RefreshCw className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" onClick={() => setDeleteId(t.id)} className="h-7 w-7 p-0 text-gray-500 hover:text-red-600 hover:bg-red-50" title="Deactivate"><Trash2 className="h-3.5 w-3.5" /></Button>
+                            </>
+                          ) : (
+                            <Button size="sm" variant="ghost" onClick={() => handleRestore(t.id)} className="h-7 px-2 text-xs text-emerald-600 hover:bg-emerald-50 border border-emerald-200" title="Restore">
+                              <RotateCcw className="h-3 w-3 mr-1" /> Restore
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -310,13 +326,13 @@ const TrainersPage = () => {
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-100"><Trash2 className="h-5 w-5 text-red-600" /></div>
                   <div>
-                    <p className="text-gray-900 font-semibold">Remove Trainer</p>
-                    <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone.</p>
+                    <p className="text-gray-900 font-semibold">Deactivate Trainer</p>
+                    <p className="text-xs text-gray-500 mt-0.5">The trainer will be marked Inactive and can be restored later.</p>
                   </div>
                 </div>
-                <p className="text-sm text-gray-600">Are you sure you want to remove <span className="font-semibold text-gray-900">{trainers.find((t) => t.id === deleteId)?.name}</span>?</p>
+                <p className="text-sm text-gray-600">Deactivate <span className="font-semibold text-gray-900">{trainers.find((t) => t.id === deleteId)?.name}</span>? They will lose access but their data is preserved.</p>
                 <div className="flex gap-3 pt-1">
-                  <Button onClick={handleDelete} className="flex-1 bg-red-600 hover:bg-red-500 text-white">Yes, Remove</Button>
+                  <Button onClick={handleDelete} className="flex-1 bg-red-600 hover:bg-red-500 text-white">Yes, Deactivate</Button>
                   <Button variant="ghost" onClick={() => setDeleteId(null)} className="flex-1 text-gray-500 hover:text-gray-900 border border-gray-200">Cancel</Button>
                 </div>
               </CardContent>

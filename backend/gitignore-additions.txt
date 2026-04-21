@@ -1,0 +1,11 @@
+# Add this to your .gitignore file to prevent committing secrets
+
+# Environment files with secrets
+.env
+.env.local
+.env.production
+.env.staging
+
+# Temporary files
+temp_*.txt
+*.tmp
