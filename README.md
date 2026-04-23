@@ -1,4 +1,4 @@
-# SprintFlow HRMS – Local Deployment & Setup Guide
+# SprintFlow – Local Deployment & Setup Guide
 
 This document covers the complete process of deploying the **SprintFlow HRMS** application on a Fedora Linux laptop, including:
 
